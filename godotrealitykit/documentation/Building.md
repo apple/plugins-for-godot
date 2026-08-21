@@ -1,7 +1,7 @@
 ## Prerequisites
 
 - macOS with [Xcode](https://developer.apple.com/xcode/) installed (including the visionOS SDK)
-    - The visionOS 27 SDK is not yet supported; use the visionOS 26 SDK
+    - visionOS 26 and visionOS 27 SDKs are supported.
     - The Metal toolchain is required to build Godot. Install it with `xcodebuild -downloadComponent metalToolchain`.
 - [SCons](https://scons.org/) build system: `python3 -m pip install scons` or `brew install scons`
 - Python 3.x

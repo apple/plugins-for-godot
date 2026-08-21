@@ -10,8 +10,8 @@ macos.editor = "res://addons/GodotRealityKit/macos.editor/GodotRealityKit.framew
 
 macos.debug = "res://addons/GodotRealityKit/macos.template_debug/GodotRealityKit.framework"
 macos.release = "res://addons/GodotRealityKit/macos.template_release/GodotRealityKit.framework"
-visionos.debug = "res://addons/GodotRealityKit/visionos.template_debug/GodotRealityKit.framework"
-visionos.release = "res://addons/GodotRealityKit/visionos.template_release/GodotRealityKit.framework"
+visionos.debug = "res://addons/GodotRealityKit/visionos.template_debug/GodotRealityKit.xcframework"
+visionos.release = "res://addons/GodotRealityKit/visionos.template_release/GodotRealityKit.xcframework"
 
 [dependencies]
 
@@ -24,9 +24,9 @@ macos.release = {
 }
 
 visionos.debug = {
-    "res://addons/GodotRealityKit/visionos.template_debug/GodotRealityKit.framework": ""
+    "res://addons/GodotRealityKit/visionos.template_debug/GodotRealityKit.xcframework": ""
 }
 
 visionos.release = {
-    "res://addons/GodotRealityKit/visionos.template_release/GodotRealityKit.framework": ""
+    "res://addons/GodotRealityKit/visionos.template_release/GodotRealityKit.xcframework": ""
 }

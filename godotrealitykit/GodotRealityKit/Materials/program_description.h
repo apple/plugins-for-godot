@@ -38,6 +38,8 @@ struct BaseMaterial3DDescription {
 	uint32_t distance_fade : godot::get_num_bits(BM::DISTANCE_FADE_OBJECT_DITHER - 0) = BM::DISTANCE_FADE_DISABLED;
 	uint32_t flags = 0;
 	uint32_t features = 0;
+	// Used only to correct the Simulator's raw-RG sampling of non-MSDF font atlases.
+	uint32_t albedo_texture_is_la8_font_atlas = false;
 
 	inline bool get_flag(godot::BaseMaterial3D::Flags p_flag) const { return flags & (1 << p_flag); }
 	inline bool get_feature(godot::BaseMaterial3D::Feature p_feature) const { return features & (1 << p_feature); }

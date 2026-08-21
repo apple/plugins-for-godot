@@ -86,6 +86,7 @@ DEPS_DIR = os.path.join(SHARED_WORKSPACE, 'deps')
 platform_arg = ARGUMENTS.get('platform', 'macos')
 config_arg = ARGUMENTS.get('config', 'debug').lower()
 deps_config = ARGUMENTS.get('deps_config', config_arg).lower()
+simulator_arg = ARGUMENTS.get('simulator', 'no') == 'yes'
 
 DEVELOPER_DIR = os.environ.get('DEVELOPER_DIR', subprocess.check_output(
     ['xcode-select', '-p']).decode().strip())
@@ -105,7 +106,7 @@ def godot_cpp_dir():
     return os.path.join(godot_deps_dir(), 'godot-cpp')
 
 def framework_build_dir():
-    pname = 'macOS' if platform_arg == 'macos' else 'visionOS'
+    pname = 'macOS' if platform_arg == 'macos' else ('visionOS-Simulator' if simulator_arg else 'visionOS')
     cname = config_arg.capitalize()
     return os.path.join(WORKSPACE, 'build', pname, cname)
 
@@ -129,6 +130,7 @@ def build_godot(target_env):
         Exit(1)
 
     clone_or_fetch(GODOT_URL, GODOT_BRANCH, gdir)
+    subprocess.check_call(['git', 'apply', os.path.join(REPO_DIR, 'patches', 'godot-visionos-simulator.patch')], cwd=gdir)
 
     lto = 'lto=full' if deps_config == 'release' else ''
 
@@ -137,6 +139,8 @@ def build_godot(target_env):
         'scons verbose=1 platform=macos target=template_{config} generate_bundle=yes vulkan=false disable_path_overrides=no {lto}'.format(
             config=deps_config, lto=lto),
         'scons verbose=1 platform=visionos target=template_{config} generate_bundle=yes compiledb=yes vulkan=false {lto}'.format(
+            config=deps_config, lto=lto),
+        'scons verbose=1 platform=visionos target=template_{config} simulator=yes generate_bundle=yes compiledb=yes vulkan=false {lto}'.format(
             config=deps_config, lto=lto),
     ]
 
@@ -167,6 +171,8 @@ def build_godot_cpp(target_env):
         'scons platform=macos target=template_{config} custom_api_file={api} use_hot_reload=no {lto}'.format(
             config=deps_config, api=ext_api, lto=lto),
         'scons platform=visionos target=template_{config} custom_api_file={api} custom_tools={tools} use_hot_reload=no {lto}'.format(
+            config=deps_config, api=ext_api, tools=tools_dir, lto=lto),
+        'scons platform=visionos target=template_{config} ios_simulator=yes custom_api_file={api} custom_tools={tools} use_hot_reload=no {lto}'.format(
             config=deps_config, api=ext_api, tools=tools_dir, lto=lto),
     ]
 
@@ -210,7 +216,7 @@ def resolve_xcode_destination():
     if platform_arg == 'macos':
         return 'generic/platform=macOS'
     elif platform_arg == 'visionos':
-        return 'generic/platform=visionOS'
+        return 'generic/platform=visionOS Simulator' if simulator_arg else 'generic/platform=visionOS'
     else:
         print("ERROR: Unsupported platform '{}'".format(platform_arg))
         Exit(1)
@@ -220,7 +226,7 @@ def resolve_xcode_products_subdir():
     if platform_arg == 'macos':
         return xcode_config
     elif platform_arg == 'visionos':
-        return '{}-xros'.format(xcode_config)
+        return '{}-{}'.format(xcode_config, 'xrsimulator' if simulator_arg else 'xros')
     return xcode_config
 
 def build_framework_action(target, source, env):
@@ -298,6 +304,7 @@ def build_docs_action(target, source, env):
     # generated cpp but leave the previously built framework binaries stale.
     subprocess.check_call(['scons', 'framework', 'platform=macos', 'config={}'.format(cfg)])
     subprocess.check_call(['scons', 'framework', 'platform=visionos', 'config={}'.format(cfg)])
+    subprocess.check_call(['scons', 'framework', 'platform=visionos', 'simulator=yes', 'config={}'.format(cfg)])
     return 0
 
 docs_builder = env.Command('docs_marker', [], build_docs_action)
@@ -328,7 +335,6 @@ def assemble_full_addon(cfg):
 
     gd = godot_dir()
     macos_bdir = os.path.join(WORKSPACE, 'build', 'macOS', cfg.capitalize())
-    visionos_bdir = os.path.join(WORKSPACE, 'build', 'visionOS', cfg.capitalize())
 
     # macOS editor: framework + export template
     editor_dir = os.path.join(ad, 'macos.editor')
@@ -348,9 +354,12 @@ def assemble_full_addon(cfg):
     visionos_template_name = 'visionos.template_{}'.format(cfg)
     template_dir = os.path.join(ad, visionos_template_name)
     os.makedirs(template_dir, exist_ok=True)
-    visionos_fw = os.path.join(visionos_bdir, 'GodotRealityKit.framework')
-    if os.path.isdir(visionos_fw):
-        shutil.copytree(visionos_fw, os.path.join(template_dir, 'GodotRealityKit.framework'))
+    subprocess.check_call([
+        XCODEBUILD, '-create-xcframework',
+        '-framework', os.path.join(WORKSPACE, 'build', 'visionOS', cfg.capitalize(), 'GodotRealityKit.framework'),
+        '-framework', os.path.join(WORKSPACE, 'build', 'visionOS-Simulator', cfg.capitalize(), 'GodotRealityKit.framework'),
+        '-output', os.path.join(template_dir, 'GodotRealityKit.xcframework'),
+    ])
     visionos_export_zip = os.path.join(gd, 'bin', 'godot_visionos.zip')
     if os.path.exists(visionos_export_zip):
         shutil.copy2(visionos_export_zip, template_dir)

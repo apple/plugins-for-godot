@@ -16,6 +16,7 @@
 
 #include "material_bridge.h"
 
+#include <TargetConditionals.h>
 #include <godot_cpp/classes/project_settings.hpp>
 
 using namespace gdrk;
@@ -428,9 +429,24 @@ bool BaseMaterialBuilder::build(swift::Array<GodotRealityKit::ProgramPart> &p_pr
 
 	// MARK: Surface Shader
 
+#if TARGET_OS_SIMULATOR
+	// Simulator exposes the LA8 atlas as raw RG; RRR/G restores RGB/alpha.
+	// Keep each branch in one SG call so Debug validates the graph only once.
+	if (d.albedo_texture_is_la8_font_atlas) {
+		SG(
+				let albedo_tex = sample_tex2d_uv1_c4(texture_albedo, (1.0h, 1.0h, 1.0h, 1.0h)c);
+				let font_albedo_tex = ND_swizzle_color4_color4(albedo_tex, "rrrg");
+				let albedo_color = ND_multiply_color4(albedo_color, font_albedo_tex);)
+	} else {
+		SG(
+				let albedo_tex = sample_tex2d_uv1_c4(texture_albedo, (1.0h, 1.0h, 1.0h, 1.0h)c);
+				let albedo_color = ND_multiply_color4(albedo_color, albedo_tex);)
+	}
+#else
 	SG(
 			let albedo_tex = sample_tex2d_uv1_c4(texture_albedo, (1.0h, 1.0h, 1.0h, 1.0h)c);
 			let albedo_color = ND_multiply_color4(albedo_color, albedo_tex);)
+#endif
 
 	if (d.get_flag(BM::FLAG_ALBEDO_FROM_VERTEX_COLOR)) {
 		SG(

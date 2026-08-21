@@ -14,7 +14,7 @@ GEN_RESOURCE_FILE_LIST_PATH = $(PROJECT_DIR)/Configurations/resources.gen.xcfile
 ARCHS = arm64
 MACOSX_DEPLOYMENT_TARGET = 26.0
 ONLY_ACTIVE_ARCH = NO
-SUPPORTED_PLATFORMS = macosx xros
+SUPPORTED_PLATFORMS = macosx xros xrsimulator
 SUPPORTS_MACCATALYST = NO
 XROS_DEPLOYMENT_TARGET = 26.0
 
@@ -92,6 +92,8 @@ SWIFT_UPCOMING_FEATURE_NONISOLATED_NONSENDING_BY_DEFAULT = NO
 OTHER_LDFLAGS =
 OTHER_LDFLAGS[sdk=macosx*] = -lgodot-cpp.macos.editor.universal
 OTHER_LDFLAGS[sdk=xros*] = -lgodot-cpp.visionos.template.arm64
+OTHER_LDFLAGS[sdk=xrsimulator*][config=Debug] = -lgodot-cpp.visionos.template_debug.arm64.simulator
+OTHER_LDFLAGS[sdk=xrsimulator*][config=Release] = -lgodot-cpp.visionos.template_release.arm64.simulator
 
 // Common preprocessor defines.
 // Each $(GDRK_..._DEFINE) below is empty unless the matching qualifier

@@ -38,9 +38,11 @@ def generate(env):
     if env["arch"] not in ("universal", "arm64", "x86_64"):
         raise ValueError("Only universal, arm64, and x86_64 are supported on visionOS. Exiting.")
 
-    sdk_name = "xros"
-    env.Append(ASFLAGS=["-mtargetos=xros2.0"])
-    env.Append(CCFLAGS=["-mtargetos=xros2.0"])
+    sdk_name = "xrsimulator" if env["ios_simulator"] else "xros"
+    target_flag = "-mtargetos=xros{}{}".format(env["visionos_min_version"], "-simulator" if env["ios_simulator"] else "")
+
+    env.Append(ASFLAGS=[target_flag])
+    env.Append(CCFLAGS=[target_flag])
 
     if sys.platform == "darwin":
         if env["VISIONOS_SDK_PATH"] == "":

@@ -1,0 +1,147 @@
+diff --git a/editor/export/editor_export_platform_apple_embedded.cpp b/editor/export/editor_export_platform_apple_embedded.cpp
+index 83406de4b0..72217558b9 100644
+--- a/editor/export/editor_export_platform_apple_embedded.cpp
++++ b/editor/export/editor_export_platform_apple_embedded.cpp
+@@ -521,7 +521,7 @@ String EditorExportPlatformAppleEmbedded::_process_config_file_line(const Ref<Ed
+ 		if ((bool)p_preset->get("capabilities/performance_gaming_tier") && !capabilities_list.has("iphone-performance-gaming-tier")) {
+ 			capabilities_list.push_back("iphone-performance-gaming-tier");
+ 		}
+-		if (((bool)p_preset->get("capabilities/performance_a12") || rendering_method == "forward_plus" || rendering_method == "mobile") && !capabilities_list.has("iphone-ipad-minimum-performance-a12")) {
++		if (get_platform_name() != "visionos" && ((bool)p_preset->get("capabilities/performance_a12") || rendering_method == "forward_plus" || rendering_method == "mobile") && !capabilities_list.has("iphone-ipad-minimum-performance-a12")) {
+ 			capabilities_list.push_back("iphone-ipad-minimum-performance-a12");
+ 		}
+ 		for (const String &capability : capabilities_list) {
+diff --git a/drivers/metal/rendering_context_driver_metal.cpp b/drivers/metal/rendering_context_driver_metal.cpp
+index c7d55485d5..a18c235c14 100644
+--- a/drivers/metal/rendering_context_driver_metal.cpp
++++ b/drivers/metal/rendering_context_driver_metal.cpp
+@@ -227,7 +227,11 @@ public:
+ 		front = (front + 1) % frame_buffers.size();
+ 
+ 		if (vsync_mode != DisplayServerEnums::VSYNC_DISABLED) {
++#if TARGET_OS_SIMULATOR
++			p_cmd_buffer->get_command_buffer()->presentDrawable(drawable);
++#else
+ 			p_cmd_buffer->get_command_buffer()->presentDrawableAfterMinimumDuration(drawable, present_minimum_duration);
++#endif
+ 		} else {
+ 			p_cmd_buffer->get_command_buffer()->presentDrawable(drawable);
+ 		}
+diff --git a/drivers/metal/rendering_device_driver_metal.cpp b/drivers/metal/rendering_device_driver_metal.cpp
+index baaa7733ac..19c71ae289 100644
+--- a/drivers/metal/rendering_device_driver_metal.cpp
++++ b/drivers/metal/rendering_device_driver_metal.cpp
+@@ -2923,6 +2923,7 @@ Error RenderingDeviceDriverMetal::_initialize(uint32_t p_device_index, uint32_t
+ 	}
+ 
+ 	// The Metal renderer requires Apple4 family. This is 2017 era A11 chips and newer.
++#if !TARGET_OS_SIMULATOR
+ 	if (device_properties->features.highestFamily < MTL::GPUFamilyApple4) {
+ 		String error_string = vformat("Your Apple GPU does not support the following features, which are required to use Metal-based renderers in Godot:\n\n");
+ 		if (!device_properties->features.imageCubeArray) {
+@@ -2938,6 +2939,7 @@ Error RenderingDeviceDriverMetal::_initialize(uint32_t p_device_index, uint32_t
+ 
+ 		return ERR_CANT_CREATE;
+ 	}
++#endif
+ 
+ 	return OK;
+ }
+diff --git a/modules/visionos_xr/visionos_xr_interface.mm b/modules/visionos_xr/visionos_xr_interface.mm
+index 77ef6286fd..62c2bf7720 100644
+--- a/modules/visionos_xr/visionos_xr_interface.mm
++++ b/modules/visionos_xr/visionos_xr_interface.mm
+@@ -308,7 +308,11 @@
+ 
+ uint32_t VisionOSXRInterface::RenderThread::get_view_count() {
+ 	// No need for ERR_NOT_ON_RENDER_THREAD
++#ifdef VISIONOS_SIMULATOR
++	return 1;
++#else
+ 	return 2;
++#endif
+ }
+ 
+ Transform3D VisionOSXRInterface::RenderThread::get_camera_transform() {
+diff --git a/platform/visionos/detect.py b/platform/visionos/detect.py
+index 83aa2a1b80..bc6b9a9552 100644
+--- a/platform/visionos/detect.py
++++ b/platform/visionos/detect.py
+@@ -144,10 +144,6 @@ def configure(env: "SConsEnvironment"):
+         print_warning("The visionOS platform does not support the Vulkan rendering driver")
+         env["vulkan"] = False
+ 
+-    if env["metal"] and env["simulator"]:
+-        print_warning("visionOS Simulator does not support the Metal rendering driver")
+-        env["metal"] = False
+-
+     if env["metal"]:
+         env.AppendUnique(CPPDEFINES=["METAL_ENABLED", "RD_ENABLED"])
+         env.Prepend(
+diff --git a/thirdparty/metal-cpp/Metal/MTLIOCommandQueue.hpp b/thirdparty/metal-cpp/Metal/MTLIOCommandQueue.hpp
+index ac956c8f11..837c1fb4c1 100644
+--- a/thirdparty/metal-cpp/Metal/MTLIOCommandQueue.hpp
++++ b/thirdparty/metal-cpp/Metal/MTLIOCommandQueue.hpp
+@@ -104,7 +104,9 @@ public:
+ };
+ 
+ }
++#if !defined(VISIONOS_SIMULATOR)
+ _MTL_PRIVATE_DEF_CONST(NS::ErrorDomain, IOErrorDomain);
++#endif
+ _MTL_INLINE MTL::IOCommandBuffer* MTL::IOCommandQueue::commandBuffer()
+ {
+     return Object::sendMessage<MTL::IOCommandBuffer*>(this, _MTL_PRIVATE_SEL(commandBuffer));
+diff --git a/thirdparty/metal-cpp/Metal/MTLTensor.hpp b/thirdparty/metal-cpp/Metal/MTLTensor.hpp
+index 221b8c9f15..6dae58bd45 100644
+--- a/thirdparty/metal-cpp/Metal/MTLTensor.hpp
++++ b/thirdparty/metal-cpp/Metal/MTLTensor.hpp
+@@ -134,7 +134,9 @@ public:
+ 
+ }
+ 
++#if !defined(VISIONOS_SIMULATOR)
+ _MTL_PRIVATE_DEF_CONST(NS::ErrorDomain, TensorDomain);
++#endif
+ 
+ _MTL_INLINE MTL::TensorExtents* MTL::TensorExtents::alloc()
+ {
+diff --git a/platform_methods.py b/platform_methods.py
+index 18b67ead00..c8d6d2a6cb 100644
+--- a/platform_methods.py
++++ b/platform_methods.py
+@@ -359,6 +359,34 @@ def setup_swift_builder(env, apple_platform, sdk_path, current_path, bridging_he
+         "-I./",  # Pass the current directory as the header root so bridging headers can include files from any point of the hierarchy
+     ]
+ 
++    # Xcode 27 exposes SwiftUI property wrappers as external macros. Direct
++    # swift-frontend builds must point at the platform's host macro plugins.
++    swift_plugin_paths = [
++        os.path.normpath(os.path.join(sdk_path, "..", "..", "usr", "lib", "swift", "host", "plugins"))
++    ]
++    if apple_platform == "visionossimulator":
++        swift_plugin_paths.append(
++            os.path.normpath(
++                os.path.join(
++                    sdk_path,
++                    "..",
++                    "..",
++                    "..",
++                    "..",
++                    "XROS.platform",
++                    "Developer",
++                    "usr",
++                    "lib",
++                    "swift",
++                    "host",
++                    "plugins",
++                )
++            )
++        )
++    for swift_plugin_path in swift_plugin_paths:
++        if os.path.isdir(swift_plugin_path):
++            env.Append(SWIFTCFLAGS=["-plugin-path", swift_plugin_path])
++
+     if "osxcross" in env:
+         env.Append(
+             SWIFTCFLAGS=[
