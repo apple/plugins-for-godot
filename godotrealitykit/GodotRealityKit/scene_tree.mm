@@ -148,14 +148,20 @@ void SceneLoader::update() {
 
 	id<MTLCommandBuffer> command_buffer = [command_queue commandBuffer];
 
-	bool finished = true;
-	finished &= textures->update(command_buffer);
-	finished &= materials->update(command_buffer, textures);
-	finished &= meshes->update(command_buffer);
-	finished &= multimeshes->update();
-	finished &= shapes->update();
-	finished &= environments->update();
-	finished &= skyboxes->update(command_buffer);
+	bool texture_needs_godot_frame = false;
+	bool finished = textures->update(command_buffer, texture_needs_godot_frame);
+	// Keep Godot running for frame-generated textures to avoid a circular wait.
+	bool should_block = !finished && !texture_needs_godot_frame;
+	auto update_finished = [&](bool p_finished) {
+		finished &= p_finished;
+		should_block |= !p_finished;
+	};
+	update_finished(materials->update(command_buffer, textures));
+	update_finished(meshes->update(command_buffer));
+	update_finished(multimeshes->update());
+	update_finished(shapes->update());
+	update_finished(environments->update());
+	update_finished(skyboxes->update(command_buffer));
 
 	[command_buffer commit];
 	command_buffers[current_command_buffer_idx] = command_buffer;
@@ -166,10 +172,10 @@ void SceneLoader::update() {
 		[capture_manager stopCapture];
 	}
 
-	if (!finished && !loading_in_progress) {
+	if (should_block && !loading_in_progress) {
 		loading_in_progress = true;
 		GodotRealityKit::startBlockingAsyncTask();
-	} else if (finished && loading_in_progress) {
+	} else if (!should_block && loading_in_progress) {
 		loading_in_progress = false;
 		GodotRealityKit::stopBlockingAsyncTask();
 	}

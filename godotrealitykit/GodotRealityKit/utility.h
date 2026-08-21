@@ -659,21 +659,30 @@ static ObjectProperty<O, Flag<F>> make_object_property(bool (O::*p_getter)(F) co
 template <std::derived_from<godot::Object> O, typename... Ts>
 class ObjectPropertyHasher;
 
+template <typename T>
+static uint32_t hash_object_property_value(const T &p_value) {
+	using PtrToArg = godot::PtrToArg<T>;
+	typename PtrToArg::EncodeT value;
+	PtrToArg::encode(p_value, &value);
+	return godot::Variant(value).hash();
+}
+
+// PtrToArg::encode expects engine-owned return storage, not a local uninitialized
+// Ref. Hashing the Ref directly keeps its ownership intact and avoids a crash
+// while loading or updating the label.
+template <typename T>
+static uint32_t hash_object_property_value(const godot::Ref<T> &p_value) {
+	return godot::HashMapHasherDefault::hash(p_value);
+}
+
 template <std::derived_from<godot::Object> O, typename T>
 class ObjectPropertyHasher<O, T> {
-	using R = typename ObjectProperty<O, T>::type;
-
 public:
 	ObjectPropertyHasher(const ObjectProperty<O, T> &p_property) :
 			property(p_property) {}
 
 	uint32_t hash(const O *p_object, uint32_t p_state = HASH_MURMUR3_SEED) const {
-		using PtrToArg = godot::PtrToArg<R>;
-		typename PtrToArg::EncodeT value;
-		R tmp = property.get(p_object);
-		PtrToArg::encode(tmp, &value);
-
-		const uint32_t hash = godot::Variant(value).hash();
+		const uint32_t hash = hash_object_property_value(property.get(p_object));
 		return godot::hash_murmur3_one_32(hash, p_state);
 	}
 
@@ -683,20 +692,13 @@ private:
 
 template <std::derived_from<godot::Object> O, typename T, typename... Ts>
 class ObjectPropertyHasher<O, T, Ts...> : ObjectPropertyHasher<O, Ts...> {
-	using R = typename ObjectProperty<O, T>::type;
-
 public:
 	ObjectPropertyHasher(const ObjectProperty<O, T> &p_property, const ObjectProperty<O, Ts> &...p_properties) :
 			ObjectPropertyHasher<O, Ts...>(p_properties...),
 			property(p_property) {}
 
 	uint32_t hash(const O *p_object, uint32_t p_state = HASH_MURMUR3_SEED) const {
-		using PtrToArg = godot::PtrToArg<R>;
-		typename PtrToArg::EncodeT value;
-		R tmp = property.get(p_object);
-		PtrToArg::encode(tmp, &value);
-
-		const uint32_t hash = godot::Variant(value).hash();
+		const uint32_t hash = hash_object_property_value(property.get(p_object));
 		const uint32_t hash_acc = godot::hash_murmur3_one_32(hash, p_state);
 		return ObjectPropertyHasher<O, Ts...>::hash(p_object, hash_acc);
 	}

@@ -103,6 +103,10 @@ public:
 	}
 
 	bool is_loading(godot::RID p_material_rid) const {
+		// Treat unregistered materials as loading to avoid a missing-RID crash.
+		if (!material_rid_to_idx.has(p_material_rid)) {
+			return true;
+		}
 		const uint32_t idx = material_rid_to_idx.get(p_material_rid);
 		return materials[idx].is_loading();
 	}

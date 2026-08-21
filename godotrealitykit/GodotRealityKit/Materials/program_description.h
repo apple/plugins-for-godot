@@ -43,8 +43,23 @@ struct BaseMaterial3DDescription {
 	inline bool get_feature(godot::BaseMaterial3D::Feature p_feature) const { return features & (1 << p_feature); }
 	inline bool is_transparent() const { return transparency == godot::BaseMaterial3D::TRANSPARENCY_ALPHA; }
 
-	inline uint32_t hash() {
-		return godot::hash_murmur3_buffer(this, sizeof(BaseMaterial3DDescription));
+	inline uint32_t hash() const {
+		// Stable field hashes avoid unnecessary shader-compilation stalls.
+		uint32_t state = godot::hash_murmur3_one_64(next_pass.get_id(), HASH_MURMUR3_SEED);
+		state = godot::hash_murmur3_one_32(uint32_t(render_priority), state);
+		state = godot::hash_murmur3_one_32(shading_mode, state);
+		state = godot::hash_murmur3_one_32(transparency, state);
+		state = godot::hash_murmur3_one_32(blend_mode, state);
+		state = godot::hash_murmur3_one_32(cull_mode, state);
+		state = godot::hash_murmur3_one_32(depth_draw_mode, state);
+		state = godot::hash_murmur3_one_32(billboard_mode, state);
+		state = godot::hash_murmur3_one_32(texture_filter, state);
+		state = godot::hash_murmur3_one_32(detail_blend_mode, state);
+		state = godot::hash_murmur3_one_32(detail_uv_layer, state);
+		state = godot::hash_murmur3_one_32(distance_fade, state);
+		state = godot::hash_murmur3_one_32(flags, state);
+		state = godot::hash_murmur3_one_32(features, state);
+		return godot::hash_fmix32(state);
 	}
 
 	std::string to_string() const;

@@ -126,7 +126,13 @@ private:
 
 		ERR_FAIL_COND_V(!mesh_to_idx.has(key), nullptr);
 		const uint32_t idx = mesh_to_idx.get(key);
-		return &meshes[idx];
+		const Mesh &mesh = meshes[idx];
+		// Guard transient surface-count mismatches to avoid out-of-bounds crashes.
+		if (p_surface_idx >= mesh.surfaces.size() ||
+				p_surface_idx >= mesh.surface_infos.size()) {
+			return nullptr;
+		}
+		return &mesh;
 	}
 
 	Mesh::SurfaceInfo get_surface_info(const godot::Dictionary &p_surface, godot::RID p_mesh_rid) const;
