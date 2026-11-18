@@ -1,5 +1,87 @@
 # Changelog
 
+## [1.2.0] - 2026-10-17
+
+Materials:
+- Split shader compilation into a reusable base program (SGL generation) and
+  a per-material finalize step. `ProgramDescription` gains `base_program_hash()`
+  so materials that differ only in per-instance state share one base program.
+- Make depth prepass/postpass a `DepthPassMode` on the program description
+  instead of a material variant. Base programs are shared across both passes.
+  `MaterialLoader` now keys materials by depth pass mode and the variant logic
+  is removed.
+- Add material preloading: expose a GodotRealityKit object to GDScript with a
+  static preload_material(path) that compiles the base program ahead of use.
+- Include `render_priority` in the shader-material program hash.
+
+Emission:
+- Honor `BaseMaterial3D.emission_operator` instead of hardcoding Multiply.
+  RealityKit samples an unset texture parameter as white and ignores the
+  nodedef default, so the untextured case is specialized into the program
+  rather than relying on Godot's `hint_default_black`. `emission_op` and
+  `has_emission_texture` are added to the description hash so materials
+  differing only in operator no longer collide in the cache.
+- Fix UV and UV2 default expressions when used in the fragment shader. atlas
+  subregions rendered as the full atlas.
+
+Hierarchical effects (hover, portal, portal crossing, IBL, clipping):
+- Resolve a node's effect RID by walking ancestors against each
+  `HierarchicalEffect`'s `root_id_to_rid` instead of reading the immediate
+  parent's cached RID. Loaders process dirty nodes in set order, not
+  topological order, so a child updated before its parent read an unwritten
+  RID. nodes are only dirty on the frame they are added, so the wrong RID was
+  never re-derived.
+- Start the walk at the node itself so effect roots stop overwriting their own
+  RID with their parent's when re-dirtied.
+- Stop register_entity from replaying a cached RID that free may have already
+  handed back to the RID_Owner.
+- Queue only the root id for propagation and resolve the RID at flush time, so
+  a create and a free of the same root in one frame cannot propagate a
+  reclaimed RID. Also removes the error spam on invalid RIDs.
+- Apply clipping to collision objects regardless of ray-pickable state.
+- Remove `HierarchicalEffect::get_rid`, `NodeLoaders::get_effect_rid` and
+  `node_id_to_topo_priority`, all now unused.
+
+Lighting:
+- Scale a directional light's fixed shadow projection extents by a new
+  `extra_light_frustum_scale`, derived from the ratio between scaled and
+  unscaled world scaling compensation. Kept separate from world_scale, which
+  RealityKit already accounts for on point lights, spot lights and materials.
+  Fixes shadows clipping against the projection boundary and disappearing as
+  the window moves in depth.
+
+Skinning:
+- Resolve deform state once per mesh and reuse it across surfaces.
+- Cache the bind-to-bone mapping and inverse bind poses on the mesh, rebuilt
+  on bind count change, `Skeleton3D` version change or skin swap, instead of
+  reading them across the GDExtension boundary every frame.
+- Fix SkeletonLoader never resetting its dirty flags.
+- Capture bone poses from Skeleton3D's `"skeleton_updated"` signal, emitted after
+  modifiers run and before poses are restored to T-pose. Removes
+  `SkeletonLoader::add_skeleton_modifier`.
+
+Meshes:
+- Recreate `LowLevelMesh` buffers when vertex or index counts grow, not only
+  when they shrink. A mesh that regenerates with more vertices (Label3D gaining
+  characters) kept its smaller buffer and tripped Metal blit validation.
+
+Input:
+- Handle only `indirectPinch` events on visionOS, ignoring other kinds in the
+  `SpatialEventCollection`, so a drag releases when the object is not looked at.
+
+Environment:
+- Skip skybox conversion in volumetric window presentation and in
+  mixed/progressive immersion, where it cannot be seen.
+
+Scene tree:
+- Hold the `RealitySceneTree` in `SceneLoader` instead of the current scene root
+  and bail when there is no tree. Fixes a crash when the scene tree is empty
+  after a reload.
+
+New Node: `RealityKitEnvironmentLightingConfiguration`
+- Provides a mean for developers to control IBL contribution in the scene
+
+
 ## [1.1.0] - 2026-08-27
 
 ### Added

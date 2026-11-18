@@ -163,6 +163,9 @@ DEFINE_SUPPORTED_NODE(VisualShaderNodeOutput)
 
 
 	ANALYZE(p_context, p_node_wrapper) {
+		if (p_node_wrapper.is_fragment_shader()) {
+			return;
+		}
 	   if (p_node_wrapper.get_input_var_name(p_context, VertexOutput::VO_UV) == std::nullopt) {
 		   p_context.uv_is_default = true;
 	   }
@@ -254,13 +257,13 @@ DEFINE_SUPPORTED_NODE(VisualShaderNodeOutput)
 			std::string uv0_expression;
 			std::string uv1_expression;
 			
-			if (p_context.uv_is_default && p_context.uv_used) {
+			if (!p_context.uv_is_default || p_context.uv_used) {
 				uv0_expression = p_node_wrapper.get_input_expression(p_context, VertexOutput::VO_UV);
 			} else {
 				uv0_expression = p_context.varying_allocator.get_vertex_expression_for_uv(0);
 			}
 			
-			if (p_context.uv2_is_default && p_context.uv2_used) {
+			if (!p_context.uv2_is_default || p_context.uv2_used) {
 				uv1_expression = p_node_wrapper.get_input_expression(p_context, VertexOutput::VO_UV2);
 			} else {
 				uv1_expression = p_context.varying_allocator.get_vertex_expression_for_uv(1);

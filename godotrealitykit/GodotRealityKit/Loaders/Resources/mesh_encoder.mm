@@ -96,6 +96,17 @@ void fill_index_buffer_compacted(uint32_t *p_dst, const void *p_src, uint32_t p_
 	}
 }
 
+void resolve_binds(Mesh &p_mesh, godot::Skeleton3D *p_skeleton, int32_t p_bind_count, int32_t p_bone_count) {
+	p_mesh.resolved_binds.resize(p_bind_count);
+	for (int32_t i = 0; i < p_bind_count; i++) {
+		int32_t bone = p_mesh.skin->get_bind_bone(i);
+		if (bone < 0 || bone >= p_bone_count) {
+			bone = p_skeleton->find_bone(godot::String(p_mesh.skin->get_bind_name(i)));
+		}
+		p_mesh.resolved_binds[i] = Mesh::ResolvedBind{ bone, p_mesh.skin->get_bind_pose(i) };
+	}
+}
+
 void upload_bone_transforms(Mesh &p_mesh, SkeletonLoader *p_skeletons) {
 	godot::Object *obj = godot::ObjectDB::get_instance(p_mesh.skeleton_id);
 	godot::Skeleton3D *skeleton = godot::Object::cast_to<godot::Skeleton3D>(obj);
@@ -116,6 +127,14 @@ void upload_bone_transforms(Mesh &p_mesh, SkeletonLoader *p_skeletons) {
 	const bool has_skin = p_mesh.skin.is_valid() && p_mesh.skin->get_bind_count() > 0;
 	const int32_t out_count = has_skin ? p_mesh.skin->get_bind_count() : bone_count;
 
+	if (has_skin) {
+		const uint64_t skeleton_version = skeleton->get_version();
+		if (int32_t(p_mesh.resolved_binds.size()) != out_count || p_mesh.resolved_skeleton_version != skeleton_version) {
+			resolve_binds(p_mesh, skeleton, out_count, bone_count);
+			p_mesh.resolved_skeleton_version = skeleton_version;
+		}
+	}
+
 	const NSUInteger byte_length = uint32_t(out_count) * 12 * sizeof(float);
 	if (p_mesh.bone_transforms_mtl == nil || p_mesh.bone_transforms_mtl.length != byte_length) {
 		p_mesh.bone_transforms_mtl = [get_metal_device() newBufferWithLength:byte_length options:MTLResourceStorageModeShared];
@@ -123,17 +142,12 @@ void upload_bone_transforms(Mesh &p_mesh, SkeletonLoader *p_skeletons) {
 
 	float *p = static_cast<float *>(p_mesh.bone_transforms_mtl.contents);
 	for (int32_t i = 0; i < out_count; i++) {
-		godot::Transform3D t;
+		static godot::Transform3D t;
 		if (has_skin) {
-			const int32_t bone_idx = p_mesh.skin->get_bind_bone(i);
-			const godot::Transform3D bind_inverse = p_mesh.skin->get_bind_pose(i);
-			if (bone_idx >= 0 && bone_idx < bone_count) {
-				t = (use_snapshot ? snapshot[bone_idx] : skeleton->get_bone_global_pose(bone_idx)) * bind_inverse;
-			} else {
-				const godot::StringName bind_name = p_mesh.skin->get_bind_name(i);
-				const int32_t named = skeleton->find_bone(godot::String(bind_name));
-				t = (named >= 0) ? (use_snapshot ? snapshot[named] : skeleton->get_bone_global_pose(named)) * bind_inverse : bind_inverse;
-			}
+			const Mesh::ResolvedBind &bind = p_mesh.resolved_binds[i];
+			t = bind.bone >= 0
+					? (use_snapshot ? snapshot[bind.bone] : skeleton->get_bone_global_pose(bind.bone)) * bind.bind_inverse
+					: bind.bind_inverse;
 		} else {
 			t = use_snapshot ? snapshot[i] : skeleton->get_bone_global_pose(i);
 		}
@@ -164,29 +178,29 @@ godot::StringName &attribute_data_key() {
 
 } //namespace
 
-// Computes run_deform, uploads bone transforms and blend shape weights.
-// Called once per deform surface — uploads are cheap (caching + small memcpy).
-static bool prepare_deform(Mesh &p_mesh, bool &out_has_skinning, SkeletonLoader *p_skeletons) {
-	out_has_skinning = p_mesh.skeleton_id != 0;
-	bool run_deform = false;
-	if (out_has_skinning) {
+// Resolves the mesh-wide deform state and uploads bone transforms and blend shape
+// weights. Called once per mesh from encode_positions.
+static DeformState prepare_deform(Mesh &p_mesh, SkeletonLoader *p_skeletons) {
+	DeformState state;
+	state.has_skinning = p_mesh.skeleton_id != 0;
+	if (state.has_skinning) {
 		for (const Mesh::Surface &s : p_mesh.surfaces) {
 			if (s.skin_mtl != nil) {
-				run_deform = true;
+				state.run_deform = true;
 				break;
 			}
 		}
 	}
-	if (!run_deform) {
+	if (!state.run_deform) {
 		for (float w : p_mesh.blend_shape_weights) {
 			if (w != 0.0f) {
-				run_deform = true;
+				state.run_deform = true;
 				break;
 			}
 		}
 	}
-	if (run_deform) {
-		if (out_has_skinning) {
+	if (state.run_deform) {
+		if (state.has_skinning) {
 			upload_bone_transforms(p_mesh, p_skeletons);
 		}
 		if (!p_mesh.blend_shape_weights.is_empty()) {
@@ -197,7 +211,7 @@ static bool prepare_deform(Mesh &p_mesh, bool &out_has_skinning, SkeletonLoader 
 			memcpy(p_mesh.blend_shape_weights_mtl.contents, p_mesh.blend_shape_weights.ptr(), byte_length);
 		}
 	}
-	return run_deform;
+	return state;
 }
 
 // ---------------------------------------------------------------------------
@@ -349,9 +363,11 @@ void MeshEncoder::encode_positions(Mesh &p_mesh) {
 		return;
 	}
 
+	const DeformState deform = prepare_deform(p_mesh, _skeletons);
+
 	for (uint32_t i = 0; i < p_mesh.surfaces.size(); i++) {
 		const uint8_t position_variant = p_mesh.surfaces[i].encoding_mode & (ENCODING_MODE_FLAG_DEFORM | ENCODING_MODE_FLAG_COMPRESSED);
-		(this->*position_encode_table[position_variant])(p_mesh, i);
+		(this->*position_encode_table[position_variant])(p_mesh, i, deform);
 	}
 }
 
@@ -575,7 +591,7 @@ const MeshEncoder::EncodeFn MeshEncoder::position_encode_table[4] = {
 // ---------------------------------------------------------------------------
 // Position encoding — one method per (deform x compressed) combination.
 
-void MeshEncoder::_encode_static_pos(Mesh &p_mesh, uint32_t surface_idx) {
+void MeshEncoder::_encode_static_pos(Mesh &p_mesh, uint32_t surface_idx, const DeformState &) {
 	Mesh::Surface &surface = p_mesh.surfaces[surface_idx];
 	auto llm = surface.resource.lowLevelMesh();
 	ERR_FAIL_COND(llm.isNone());
@@ -589,7 +605,7 @@ void MeshEncoder::_encode_static_pos(Mesh &p_mesh, uint32_t surface_idx) {
 	_blit_ops.push_back({ staging, dst, staging.length });
 }
 
-void MeshEncoder::_encode_static_compressed_pos(Mesh &p_mesh, uint32_t surface_idx) {
+void MeshEncoder::_encode_static_compressed_pos(Mesh &p_mesh, uint32_t surface_idx, const DeformState &) {
 	Mesh::Surface &surface = p_mesh.surfaces[surface_idx];
 	const Mesh::SurfaceInfo &info = p_mesh.surface_infos[surface_idx];
 	auto llm = surface.resource.lowLevelMesh();
@@ -604,33 +620,29 @@ void MeshEncoder::_encode_static_compressed_pos(Mesh &p_mesh, uint32_t surface_i
 	_decompress_ops.push_back(make_vertex_decompress_op(src, dst, info));
 }
 
-void MeshEncoder::_encode_deform_pos(Mesh &p_mesh, uint32_t surface_idx) {
+void MeshEncoder::_encode_deform_pos(Mesh &p_mesh, uint32_t surface_idx, const DeformState &p_deform) {
 	Mesh::Surface &surface = p_mesh.surfaces[surface_idx];
 	const Mesh::SurfaceInfo &info = p_mesh.surface_infos[surface_idx];
 	auto llm = surface.resource.lowLevelMesh();
 	ERR_FAIL_COND(llm.isNone());
 
-	bool has_skinning;
-	const bool run_deform = prepare_deform(p_mesh, has_skinning, _skeletons);
 	id<MTLBuffer> dst = llm.get().replace(_command_buffer);
-	if (run_deform) {
-		_deform_ops.push_back(make_deform_op(p_mesh, surface, info, dst, p_mesh.bone_transforms_mtl, p_mesh.blend_shape_weights_mtl, has_skinning, false));
+	if (p_deform.run_deform) {
+		_deform_ops.push_back(make_deform_op(p_mesh, surface, info, dst, p_mesh.bone_transforms_mtl, p_mesh.blend_shape_weights_mtl, p_deform.has_skinning, false));
 	} else {
 		_blit_ops.push_back({ surface.base_vertex_mtl, dst, surface.base_vertex_mtl.length });
 	}
 }
 
-void MeshEncoder::_encode_deform_compressed_pos(Mesh &p_mesh, uint32_t surface_idx) {
+void MeshEncoder::_encode_deform_compressed_pos(Mesh &p_mesh, uint32_t surface_idx, const DeformState &p_deform) {
 	Mesh::Surface &surface = p_mesh.surfaces[surface_idx];
 	const Mesh::SurfaceInfo &info = p_mesh.surface_infos[surface_idx];
 	auto llm = surface.resource.lowLevelMesh();
 	ERR_FAIL_COND(llm.isNone());
 
-	bool has_skinning;
-	const bool run_deform = prepare_deform(p_mesh, has_skinning, _skeletons);
 	id<MTLBuffer> dst = llm.get().replace(_command_buffer);
-	if (run_deform) {
-		_deform_ops.push_back(make_deform_op(p_mesh, surface, info, dst, p_mesh.bone_transforms_mtl, p_mesh.blend_shape_weights_mtl, has_skinning, true));
+	if (p_deform.run_deform) {
+		_deform_ops.push_back(make_deform_op(p_mesh, surface, info, dst, p_mesh.bone_transforms_mtl, p_mesh.blend_shape_weights_mtl, p_deform.has_skinning, true));
 	} else {
 		_blit_ops.push_back({ surface.base_vertex_mtl, dst, surface.base_vertex_mtl.length });
 	}

@@ -62,6 +62,13 @@ struct Mesh {
 		friend bool operator==(const SurfaceInfo &lhs, const SurfaceInfo &rhs) = default;
 	};
 
+	// One palette slot. `bone` is -1 when the bind resolved to no skeleton bone, in
+	// which case `bind_inverse` is used on its own.
+	struct ResolvedBind {
+		int32_t bone = -1;
+		godot::Transform3D bind_inverse;
+	};
+
 	godot::RID mesh_rid;
 	uint64_t instance_id = 0;
 	uint64_t skeleton_id = 0;
@@ -90,6 +97,14 @@ struct Mesh {
 	// Skin from the rep MeshInstance3D. Provides bind→bone mapping and inverse
 	// bind poses. nil means "use identity bind poses with bind_idx == bone_idx".
 	godot::Ref<godot::Skin> skin;
+
+	// bind→bone mapping and inverse bind poses read out of `skin`. Both are fixed for
+	// a given (skin, skeleton bone list), so upload_bone_transforms resolves them once
+	// rather than re-reading them across the GDExtension boundary every frame. Rebuilt
+	// when the bind count changes, when Skeleton3D::get_version() changes (add_bone /
+	// set_bone_name / clear_bones), or when MeshLoader::set_skin swaps the Ref.
+	godot::LocalVector<ResolvedBind> resolved_binds;
+	uint64_t resolved_skeleton_version = 0;
 
 	// Index into SkeletonLoader — shared across every mesh bound to the same
 	// skeleton. UINT32_MAX means "no skeleton". SkeletonLoader owns the bone-pose

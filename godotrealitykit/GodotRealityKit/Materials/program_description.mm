@@ -433,6 +433,7 @@ std::string BaseMaterial3DDescription::to_string() const {
 			"  detail_blend_mode: {}\n"
 			"  detail_uv_layer:   {}\n"
 			"  distance_fade:     {}\n"
+			"  emission_op:       {}\n"
 			"  flags:             {}\n"
 			"  features:          {}\n"
 			"}}",
@@ -447,6 +448,7 @@ std::string BaseMaterial3DDescription::to_string() const {
 			blend_mode_str(detail_blend_mode),
 			detail_uv_layer == BM::DETAIL_UV_1 ? "UV1" : "UV2",
 			distance_fade_str(),
+			emission_op == BM::EMISSION_OP_ADD ? "Add" : "Multiply",
 			flags_str,
 			features_str);
 }

@@ -19,12 +19,9 @@ template <typename Derived, std::derived_from<godot::Node> Node>
 void NodeLoaderBase<Derived, Node>::update(const ResourceLoaderSet &p_resource_loaders) {
 	PROFILE_FUNC_SCOPE;
 	Base::for_each_dirty([&](uint32_t p_idx) {
-		godot::Node *node = nodes[p_idx];
-		godot::Node *parent_node = node ? node->get_parent() : nullptr;
-
-		owner->for_each_effect([&]<typename Effect>(HierarchicalEffect<Effect> &effect) {
-			const godot::RID effect_rid = parent_node ? effect.get_rid(parent_node) : godot::RID();
-			static_cast<Derived *>(this)->template _update_effect<Effect>(p_idx, effect_rid);
+		const ResolvedEffectRIDs resolved = owner->resolve_inherited_effects(nodes[p_idx]);
+		resolved.for_each([&]<typename Effect>(const ResolvedEffectRID<Effect> &p_resolved) {
+			static_cast<Derived *>(this)->template _update_effect<Effect>(p_idx, p_resolved.rid);
 		});
 	});
 }
@@ -54,9 +51,13 @@ void NodeLoader<Derived, Node>::register_entity(uint32_t p_index) {
 		Base::owner->map_entity(node, entity.id());
 	}
 
-	Base::owner->for_each_effect([&]<typename Effect>(HierarchicalEffect<Effect> &effect) {
-		const godot::RID effect_rid = Base::node_effect_rids_set.template get<Effect>()[p_index];
-		static_cast<Derived *>(this)->template _update_effect<Effect>(p_index, effect_rid);
+	// Resolve rather than replaying node_effect_rids_set: a deferred registration
+	// (CollisionObjectLoader's ray-pickable gating, MeshInstanceLoader's culling entry) can land
+	// before the loader owning the effect has run, so the cached rid may be absent or may belong
+	// to an effect that was freed earlier this frame.
+	const ResolvedEffectRIDs resolved = Base::owner->resolve_inherited_effects(node);
+	resolved.for_each([&]<typename Effect>(const ResolvedEffectRID<Effect> &p_resolved) {
+		static_cast<Derived *>(this)->template _update_effect<Effect>(p_index, p_resolved.rid);
 	});
 }
 
@@ -152,10 +153,10 @@ template class gdrk::NodeLoader<LabelLoader, godot::Label3D>;
 template class gdrk::NodeLoader<ImageBasedLightLoader, gdrk::RealityImageBasedLight3D>;
 
 template class gdrk::NodeLoaderBase<CameraLoader, godot::Node3D>;
-template class gdrk::NodeLoaderBase<SkeletonModifierLoader, godot::SkeletonModifier3D>;
 template class gdrk::NodeLoaderBase<RealityHoverEffectLoader, RealityHoverEffect3D>;
 template class gdrk::NodeLoaderBase<RealityPortalCrossingLoader, RealityPortalCrossing3D>;
 template class gdrk::NodeLoaderBase<WorldEnvironmentLoader, godot::WorldEnvironment>;
 template class gdrk::NodeLoaderBase<AnyNodeLoader, godot::Node>;
 template class gdrk::NodeLoaderBase<RealityKitDirectionalLightShadow3DLoader, RealityKitDirectionalLightShadow3D>;
 template class gdrk::NodeLoaderBase<RealityClippingLoader, RealityClipping3D>;
+template class gdrk::NodeLoaderBase<RealityKitEnvironmentLightingConfigurationLoader, RealityKitEnvironmentLightingConfiguration>;

@@ -228,7 +228,7 @@ static void update_custom_material(TextureLoader &p_textures, const ProgramDescr
 	}
 }
 
-ProgramDescription MaterialLoader::program_description_for_material(const godot::Material &p_material, bool p_use_depth_postpass) {
+ProgramDescription MaterialLoader::program_description_for_material(const godot::Material &p_material, DepthPassMode p_depth_pass_mode) {
 	MaterialType type = gdrk::type_from_material(&p_material);
 	if (type == MATERIAL_TYPE_BASE_MATERIAL3D) {
 		godot::Ref<godot::Material> next_pass = p_material.get_next_pass();
@@ -246,9 +246,11 @@ ProgramDescription MaterialLoader::program_description_for_material(const godot:
 			.detail_blend_mode = bm.get_detail_blend_mode(),
 			.detail_uv_layer = bm.get_detail_uv(),
 			.distance_fade = bm.get_distance_fade(),
+			.emission_op = bm.get_emission_operator(),
+			.has_emission_texture = bm.get_texture(godot::BaseMaterial3D::TEXTURE_EMISSION).is_valid(),
 			.flags = get_material_flags(bm),
 			.features = get_material_features(bm),
-			.use_depth_postpass = p_use_depth_postpass,
+			.depth_pass_mode = p_depth_pass_mode,
 		};
 	} else if (type == MATERIAL_TYPE_SHADER_MATERIAL) {
 		const godot::ShaderMaterial &sm = (const godot::ShaderMaterial &)p_material;
@@ -256,7 +258,7 @@ ProgramDescription MaterialLoader::program_description_for_material(const godot:
 
 		if (godot::Object::cast_to<godot::VisualShader>(shader.ptr())) {
 			ShaderMaterialDescription desc(shader, sm.get_render_priority());
-			desc.use_depth_postpass = p_use_depth_postpass;
+			desc.depth_pass_mode = p_depth_pass_mode;
 			return desc;
 		}
 
@@ -269,7 +271,7 @@ ProgramDescription MaterialLoader::program_description_for_material(const godot:
 			if (vs.is_valid()) {
 				WARN_PRINT(godot::String("ShaderMaterial shader '") + shader_path + "' is not a VisualShader; loading sibling '" + alt_path + "' instead.");
 				ShaderMaterialDescription desc(vs, sm.get_render_priority());
-				desc.use_depth_postpass = p_use_depth_postpass;
+				desc.depth_pass_mode = p_depth_pass_mode;
 				return desc;
 			}
 		}
@@ -295,54 +297,55 @@ void MaterialLoader::update_description(uint32_t p_index) {
 		return;
 	}
 
-	for (bool use_depth_postpass : { false, true }) {
-		const uint32_t variant = variant_index(use_depth_postpass);
-		if (!material.variants[variant].requested) {
-			continue;
-		}
-		set_variant_description(p_index, variant, program_description_for_material(*material.material.ptr(), use_depth_postpass));
-	}
+	set_description(p_index, program_description_for_material(*material.material.ptr(), material.depth_pass_mode));
 }
 
 void MaterialLoader::update_parameters(TextureLoader &p_textures, uint32_t p_index) {
 	Material &material = materials[p_index];
 
-	for (ProgramVariant &variant : material.variants) {
-		if (!variant.requested) {
-			continue;
-		}
+	if (material.program_idx == UINT32_MAX) {
+		return;
+	}
 
-		const ProgramDescription &desc = variant.description;
-		GodotRealityKit::SGLMaterial resource = variant.resource;
+	const ProgramDescription &desc = material.description;
+	GodotRealityKit::SGLMaterial resource = material.resource;
 
-		if (desc.material_type == MATERIAL_TYPE_BASE_MATERIAL3D) {
-			update_base_material3D(p_textures, desc, resource, material.material_rid);
-		} else if (desc.material_type == MATERIAL_TYPE_SHADER_MATERIAL) {
-			if (material.material.is_null()) {
-				continue;
-			}
-			update_custom_material(p_textures, desc, resource, (godot::ShaderMaterial &)*material.material.ptr());
+	if (desc.material_type == MATERIAL_TYPE_BASE_MATERIAL3D) {
+		update_base_material3D(p_textures, desc, resource, material.material_rid);
+	} else if (desc.material_type == MATERIAL_TYPE_SHADER_MATERIAL) {
+		if (material.material.is_null()) {
+			return;
 		}
+		update_custom_material(p_textures, desc, resource, (godot::ShaderMaterial &)*material.material.ptr());
 	}
 }
 
-uint32_t MaterialLoader::find_or_add(godot::RID p_material_rid, godot::Ref<godot::Material> p_material, bool p_use_depth_postpass) {
+bool MaterialLoader::set_description(uint32_t p_idx, ProgramDescription &&p_description) {
+	Material &material = materials[p_idx];
+	if (material.is_registered()) {
+		uint32_t new_hash = p_description.hash;
+		if (new_hash == material.description.hash) {
+			return false;
+		}
+	}
+
+	material.description = p_description;
+	material.program_idx = program_cache.create_program_async(material.description);
+	material.resource = GodotRealityKit::SGLMaterial::init();
+	mark_dirty(p_idx);
+	return true;
+}
+
+uint32_t MaterialLoader::find_or_add(godot::RID p_material_rid, godot::Ref<godot::Material> p_material, DepthPassMode p_depth_pass_mode) {
 	if (!p_material_rid.is_valid()) {
 		return default_material_idx;
 	}
 
-	if (material_rid_to_idx.has(p_material_rid)) {
-		const uint32_t idx = material_rid_to_idx.get(p_material_rid);
+	RID_Associated<uint32_t> &rid_to_idx = material_rid_to_idx[p_depth_pass_mode];
+	if (rid_to_idx.has(p_material_rid)) {
+		const uint32_t idx = rid_to_idx.get(p_material_rid);
 		if (get_ref_count(idx) == 0) {
-			materials[idx].variants[0] = ProgramVariant();
-			materials[idx].variants[1] = ProgramVariant();
-			if (p_material.ptr()) {
-				materials[idx].material = p_material;
-			}
-			mark_dirty(idx);
-		}
-		if (p_material.ptr()) {
-			request_variant(idx, p_use_depth_postpass, *p_material.ptr());
+			set_description(idx, p_material.ptr() ? program_description_for_material(*(p_material.ptr()), p_depth_pass_mode) : ProgramDescription());
 		}
 		return idx;
 	}
@@ -355,20 +358,29 @@ uint32_t MaterialLoader::find_or_add(godot::RID p_material_rid, godot::Ref<godot
 	materials[idx] = Material{
 		.material_rid = p_material_rid,
 		.material = p_material,
+		.program_idx = UINT32_MAX,
+		.depth_pass_mode = p_depth_pass_mode,
 	};
 
-	if (p_material.ptr()) {
-		request_variant(idx, p_use_depth_postpass, *p_material.ptr());
-	}
-
-	material_rid_to_idx.insert(p_material_rid, idx);
+	set_description(idx, p_material.ptr() ? program_description_for_material(*(p_material.ptr()), p_depth_pass_mode) : ProgramDescription());
+	rid_to_idx.insert(p_material_rid, idx);
 	return idx;
+}
+
+void MaterialLoader::reset_program_cache() {
+	ERR_FAIL_COND_MSG(has_programs_loading(), "Cannot reset program cache while programs are still loading");
+
+	program_cache.reset();
+	for_each_valid([this](uint32_t idx) {
+		materials[idx].program_idx = UINT32_MAX;
+		set_description(idx, ProgramDescription(materials[idx].description));
+	});
 }
 
 void MaterialLoader::on_program_loaded(uint32_t p_program_index) {
 	for_each_valid([this, p_program_index](uint32_t idx) {
 		Material &mat = materials[idx];
-		if (mat.variants[0].program_idx == p_program_index || mat.variants[1].program_idx == p_program_index) {
+		if (mat.program_idx == p_program_index) {
 			mark_dirty(idx);
 		}
 	});
@@ -389,58 +401,36 @@ void MaterialLoader::update_deps(TextureLoader *p_textures) {
 	for_each_valid([&](uint32_t idx) {
 		Material &material = materials[idx];
 
-		bool any_variant_just_loaded = false;
-		for (ProgramVariant &variant : material.variants) {
-			if (!variant.requested) {
-				continue;
-			}
+		// Program cache should have returned at least a broken material index here.
+		ERR_FAIL_COND_MSG(!material.is_registered(), "Internal error: material registration failed.");
 
-			// Process variants that just got requested, their program is unknown.
-			if (variant.program_idx == UINT32_MAX) {
-				const uint32_t program_idx = program_cache.create_program_async(variant.description);
-				if (program_idx == UINT32_MAX) {
-					ERR_PRINT("Unable to create program from description, using default material as fallback");
-					const uint32_t default_idx = find_or_add(godot::RID(), nullptr);
-					variant.program_idx = materials[default_idx].variants[0].program_idx;
-					material.material = materials[default_idx].material;
-				} else {
-					variant.program_idx = program_idx;
-				}
-
-				mark_dirty(idx);
-			}
-
-			// Program is now known, if loaded, we can now create the Material instance
-			// for it
-			if (variant.program_idx != UINT32_MAX &&
-					variant.resource.isLoading() &&
-					!program_cache.is_program_loading(variant.program_idx)) {
-				variant.resource = program_cache.create_material(variant.program_idx, material.material_rid);
-				variant.description = program_cache.get_description(variant.program_idx);
-				any_variant_just_loaded = true;
-				mark_dirty(idx);
-			}
+		uint32_t program_index = material.program_idx;
+		// Program is now known, if loaded, we can now create the Material instance
+		// for it
+		bool loaded = material.is_loaded();
+		if (!loaded &&
+				!program_cache.is_program_loading(material.program_idx)) {
+			material.description = program_cache.get_description(program_index);
+			material.resource = program_cache.create_material(program_index);
+			update_default_texture_deps(p_textures, changed_texture_deps, idx);
+			loaded = true;
 		}
 
-		if (any_variant_just_loaded) {
-			if (const ProgramDescription *desc = get_requested_description(idx)) {
-				update_default_texture_deps(p_textures, changed_texture_deps, idx, *desc);
-			}
+		if (loaded) {
+			update_parameter_texture_deps(p_textures, changed_texture_deps, idx);
 		}
-
-		// Register textures set as material parameters.
-		update_parameter_texture_deps(p_textures, changed_texture_deps, idx, materials[idx].material.ptr());
 	});
 
 	texture_deps.replace_changed(changed_texture_deps, p_textures);
 }
 
-void MaterialLoader::update_default_texture_deps(TextureLoader *p_textures, ChangedDependencyListSet &p_changed_texture_deps, uint32_t p_index, const ProgramDescription &p_desc) {
+void MaterialLoader::update_default_texture_deps(TextureLoader *p_textures, ChangedDependencyListSet &p_changed_texture_deps, uint32_t p_index) {
 	const Material &material = materials[p_index];
 	const godot::RID material_rid = material.material_rid;
+	const ProgramDescription &desc = material.description;
 	ERR_FAIL_COND(!material_rid.is_valid());
-	if (p_desc.material_type == MATERIAL_TYPE_SHADER_MATERIAL) {
-		p_desc.asShaderMaterial().for_each_texture_constants(([&](uint8_t handle, const UniformDescriptor &udesc) {
+	if (desc.material_type == MATERIAL_TYPE_SHADER_MATERIAL) {
+		desc.asShaderMaterial().for_each_texture_constants(([&](uint8_t handle, const UniformDescriptor &udesc) {
 			godot::Texture2D *texture = godot::Object::cast_to<godot::Texture2D>((godot::Object *)udesc.default_value);
 			if (!texture) {
 				return;
@@ -452,19 +442,18 @@ void MaterialLoader::update_default_texture_deps(TextureLoader *p_textures, Chan
 	}
 }
 
-void MaterialLoader::update_parameter_texture_deps(TextureLoader *p_textures, ChangedDependencyListSet &p_changed_texture_deps, uint32_t p_index, godot::Material *p_material) {
+void MaterialLoader::update_parameter_texture_deps(TextureLoader *p_textures, ChangedDependencyListSet &p_changed_texture_deps, uint32_t p_index) {
 	static const godot::StringName *param_table = BaseMaterialBuilder::get_godot_parameter_name_table();
 
 	const Material &material = materials[p_index];
+	godot::Material *material_ptr = material.material.ptr();
+
 	const godot::RID material_rid = material.material_rid;
 	ERR_FAIL_COND(!material_rid.is_valid());
-	const ProgramDescription *desc = get_requested_description(p_index);
-	if (!desc) {
-		return;
-	}
-	if (desc->material_type == MATERIAL_TYPE_BASE_MATERIAL3D) {
-		godot::BaseMaterial3D *godot_material = godot::Object::cast_to<godot::BaseMaterial3D>(p_material);
-		ERR_FAIL_COND(p_material && !godot_material);
+	const ProgramDescription &desc = material.description;
+	if (desc.material_type == MATERIAL_TYPE_BASE_MATERIAL3D) {
+		godot::BaseMaterial3D *godot_material = godot::Object::cast_to<godot::BaseMaterial3D>(material_ptr);
+		ERR_FAIL_COND(material_ptr && !godot_material);
 
 		uint32_t texture_state = HASH_MURMUR3_SEED;
 		const uint32_t texture_count = godot::BaseMaterial3D::TextureParam::TEXTURE_MAX;
@@ -482,7 +471,7 @@ void MaterialLoader::update_parameter_texture_deps(TextureLoader *p_textures, Ch
 			for (uint32_t texture_idx = 0; texture_idx < texture_count; texture_idx++) {
 				const godot::RID texture_rid = rendering_server()->material_get_param(material_rid, param_table[BaseMaterialParameter::TEXTURE_ALBEDO + texture_idx]);
 				const auto texture_param = godot::BaseMaterial3D::TextureParam(texture_idx);
-				godot::Texture2D *texture = p_material ? godot_material->get_texture(texture_param).ptr() : nullptr;
+				godot::Texture2D *texture = godot_material ? godot_material->get_texture(texture_param).ptr() : nullptr;
 				if (texture_rid.is_valid()) {
 					const uint32_t texture_idx = p_textures->find_or_add(texture_rid, texture, get_usage(texture_param));
 					p_changed_texture_deps.add_changed_dep(texture_idx, p_index);
@@ -491,9 +480,9 @@ void MaterialLoader::update_parameter_texture_deps(TextureLoader *p_textures, Ch
 
 			material_dep_states[p_index].texture_hash = texture_hash;
 		}
-	} else if (desc->material_type == MATERIAL_TYPE_SHADER_MATERIAL) {
-		desc->asShaderMaterial().for_each_texture_uniform(([&](uint8_t handle, const UniformDescriptor &udesc) {
-			godot::ShaderMaterial *shader_material = (godot::ShaderMaterial *)p_material;
+	} else if (desc.material_type == MATERIAL_TYPE_SHADER_MATERIAL) {
+		desc.asShaderMaterial().for_each_texture_uniform(([&](uint8_t handle, const UniformDescriptor &udesc) {
+			godot::ShaderMaterial *shader_material = (godot::ShaderMaterial *)material_ptr;
 			godot::Variant value = shader_material->get_shader_parameter(udesc.name);
 			if (value.get_type() != godot::Variant::OBJECT) {
 				return;
@@ -527,8 +516,8 @@ bool MaterialLoader::update(id<MTLCommandBuffer> p_command_buffer, TextureLoader
 void MaterialLoader::set_world_scale(float p_world_scale) {
 	if (world_scale != p_world_scale) {
 		for_each_valid([&](uint32_t idx) {
-			for (ProgramVariant &variant : materials[idx].variants) {
-				variant.resource.setWorldScale(p_world_scale);
+			if (!materials[idx].resource.isLoading()) {
+				materials[idx].resource.setWorldScale(p_world_scale);
 			}
 		});
 		world_scale = p_world_scale;

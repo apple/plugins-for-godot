@@ -135,6 +135,12 @@ extension RealityView {
     private func handleEvent(event: SpatialEventCollection.Event, value: Value, delegate: GDRKBridgeDelegate?, root: RealityKit.Entity, size: Size, ended: Bool) {
         let eventID = event.id.hashValue
 
+#if !os(macOS)
+        if event.kind != .indirectPinch {
+            return
+        }
+#endif
+
 #if os(macOS)
         let position3D: SIMD3<Float>? = nil
 #else
@@ -244,6 +250,7 @@ extension RealityView {
 class PortalRealityViewState {
     var lastViewBounds: BoundingBox? = nil
     var lastCageScale: Float? = nil
+    var lastExtraLightFrustumScale: Float? = nil
 }
 
 // Workaround for : RealityKit's RealityView does not receive
@@ -331,6 +338,23 @@ struct PortalRealityView : View {
         }
     }
 
+    private func extraLightFrustumScale() -> Float {
+        let unscaled = physicalMetrics.worldScalingCompensation(.unscaled).convert(1.0, from: .meters)
+        let scaled = physicalMetrics.worldScalingCompensation(.scaled).convert(1.0, from: .meters)
+        guard unscaled > 0, scaled > 0 else {
+            return 1.0
+        }
+        return Float(scaled / unscaled)
+    }
+
+    private func updateExtraLightFrustumScale() {
+        let scale = self.extraLightFrustumScale()
+        if state.lastExtraLightFrustumScale != scale {
+            self.delegate?.onExtraLightFrustumScaleChanged(scale)
+            state.lastExtraLightFrustumScale = scale
+        }
+    }
+
     public var body: some View {
         GeometryReader3D{ proxy in
             RealityView(make: { content in
@@ -349,6 +373,7 @@ struct PortalRealityView : View {
 
                 self.subscription = content.subscribe(to: SceneEvents.Update.self, self.onSceneUpdate)
                 self.delegate?.onWorldScaleChanged(self.worldScale)
+                self.updateExtraLightFrustumScale()
             }, update: { content in
                 let viewBounds = content.convert(proxy.frame(in: .local), from: .local, to: .scene)
                 if self.state.lastViewBounds != viewBounds {
@@ -364,6 +389,8 @@ struct PortalRealityView : View {
                 if let target = self.interactionTarget {
                     self.updateInteractionTarget(target, in: proxy)
                 }
+
+                self.updateExtraLightFrustumScale()
 
                 self.delegate?.onWindowResized(simd_float3(proxy.size.vector))
             })

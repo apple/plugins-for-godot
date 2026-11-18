@@ -18,6 +18,7 @@
 #include <godot_cpp/classes/base_material3d.hpp>
 #include <godot_cpp/classes/shader_material.hpp>
 #include <godot_cpp/classes/visual_shader.hpp>
+#include <godot_cpp/templates/hashfuncs.hpp>
 
 #include <format>
 
@@ -118,31 +119,46 @@ struct RenderModeDescription {
 	std::string to_string() const;
 };
 
+enum DepthPassMode {
+	DepthPrepass = 0,
+	DepthPostpass = 1,
+
+	DepthPassModeCount
+};
+
 struct BaseMaterial3DDescription {
 	using BM = godot::BaseMaterial3D;
 	godot::RID next_pass = godot::RID();
 	int32_t render_priority = 0;
-	uint32_t shading_mode : godot::get_num_bits(BM::SHADING_MODE_MAX - 1) = BM::SHADING_MODE_PER_PIXEL;
-	uint32_t transparency : godot::get_num_bits(BM::TRANSPARENCY_MAX - 1) = BM::TRANSPARENCY_DISABLED;
-	uint32_t blend_mode : godot::get_num_bits(BM::BLEND_MODE_PREMULT_ALPHA - 0) = BM::BLEND_MODE_MIX;
-	uint32_t cull_mode : godot::get_num_bits(BM::CULL_DISABLED - 0) = BM::CULL_BACK;
-	uint32_t depth_draw_mode : godot::get_num_bits(BM::DEPTH_DRAW_DISABLED - 0) = BM::DEPTH_DRAW_OPAQUE_ONLY;
-	uint32_t billboard_mode : godot::get_num_bits(BM::BILLBOARD_PARTICLES - 0) = BM::BILLBOARD_DISABLED;
-	uint32_t texture_filter : godot::get_num_bits(BM::TEXTURE_FILTER_MAX - 1) = BM::TEXTURE_FILTER_LINEAR_WITH_MIPMAPS;
-	uint32_t detail_blend_mode : godot::get_num_bits(BM::BLEND_MODE_PREMULT_ALPHA - 0) = BM::BLEND_MODE_MIX;
-	uint32_t detail_uv_layer : godot::get_num_bits(BM::DETAIL_UV_2 - 0) = BM::DETAIL_UV_1;
-	uint32_t distance_fade : godot::get_num_bits(BM::DISTANCE_FADE_OBJECT_DITHER - 0) = BM::DISTANCE_FADE_DISABLED;
+	uint32_t shading_mode : godot::Math::get_num_bits(BM::SHADING_MODE_MAX - 1) = BM::SHADING_MODE_PER_PIXEL;
+	uint32_t transparency : godot::Math::get_num_bits(BM::TRANSPARENCY_MAX - 1) = BM::TRANSPARENCY_DISABLED;
+	uint32_t blend_mode : godot::Math::get_num_bits(BM::BLEND_MODE_PREMULT_ALPHA - 0) = BM::BLEND_MODE_MIX;
+	uint32_t cull_mode : godot::Math::get_num_bits(BM::CULL_DISABLED - 0) = BM::CULL_BACK;
+	uint32_t depth_draw_mode : godot::Math::get_num_bits(BM::DEPTH_DRAW_DISABLED - 0) = BM::DEPTH_DRAW_OPAQUE_ONLY;
+	uint32_t billboard_mode : godot::Math::get_num_bits(BM::BILLBOARD_PARTICLES - 0) = BM::BILLBOARD_DISABLED;
+	uint32_t texture_filter : godot::Math::get_num_bits(BM::TEXTURE_FILTER_MAX - 1) = BM::TEXTURE_FILTER_LINEAR_WITH_MIPMAPS;
+	uint32_t detail_blend_mode : godot::Math::get_num_bits(BM::BLEND_MODE_PREMULT_ALPHA - 0) = BM::BLEND_MODE_MIX;
+	uint32_t detail_uv_layer : godot::Math::get_num_bits(BM::DETAIL_UV_2 - 0) = BM::DETAIL_UV_1;
+	uint32_t distance_fade : godot::Math::get_num_bits(BM::DISTANCE_FADE_OBJECT_DITHER - 0) = BM::DISTANCE_FADE_DISABLED;
+	uint32_t emission_op : godot::Math::get_num_bits(BM::EMISSION_OP_MULTIPLY - 0) = BM::EMISSION_OP_ADD;
+	uint32_t has_emission_texture : 1 = false;
 	uint32_t flags = 0;
 	uint32_t features = 0;
-	bool use_depth_postpass = false;
+	DepthPassMode depth_pass_mode = DepthPassMode::DepthPrepass;
 
 	inline bool get_flag(godot::BaseMaterial3D::Flags p_flag) const { return flags & (1 << p_flag); }
 	inline bool get_feature(godot::BaseMaterial3D::Feature p_feature) const { return features & (1 << p_feature); }
 	inline bool is_transparent() const { return transparency == godot::BaseMaterial3D::TRANSPARENCY_ALPHA; }
 
 	inline uint32_t hash() {
-		uint32_t h = godot::hash_murmur3_one_64(uint64_t(next_pass.get_id()));
-		h = godot::hash_murmur3_one_32(uint32_t(render_priority), h);
+		uint32_t h = base_program_hash();
+		h = godot::hash_murmur3_one_32(render_priority, h);
+		h = godot::hash_murmur3_one_32(depth_pass_mode, h);
+		return godot::hash_fmix32(h);
+	}
+
+	inline uint32_t base_program_hash() const {
+		uint32_t h = godot::hash_murmur3_one_64(next_pass.is_valid() ? (uint64_t)next_pass.get_id() : 0);
 		h = godot::hash_murmur3_one_32(shading_mode, h);
 		h = godot::hash_murmur3_one_32(transparency, h);
 		h = godot::hash_murmur3_one_32(blend_mode, h);
@@ -153,10 +169,11 @@ struct BaseMaterial3DDescription {
 		h = godot::hash_murmur3_one_32(detail_blend_mode, h);
 		h = godot::hash_murmur3_one_32(detail_uv_layer, h);
 		h = godot::hash_murmur3_one_32(distance_fade, h);
+		h = godot::hash_murmur3_one_32(emission_op, h);
+		h = godot::hash_murmur3_one_32(has_emission_texture, h);
 		h = godot::hash_murmur3_one_32(flags, h);
 		h = godot::hash_murmur3_one_32(features, h);
-		h = godot::hash_murmur3_one_32(uint32_t(use_depth_postpass), h);
-		return h;
+		return godot::hash_fmix32(h);
 	}
 
 	std::string to_string() const;
@@ -171,7 +188,7 @@ struct ShaderMaterialDescription {
 	RenderModeDescription render_mode;
 	int32_t render_priority = 0;
 	bool transparent = false;
-	bool use_depth_postpass = false;
+	DepthPassMode depth_pass_mode = DepthPassMode::DepthPrepass;
 
 	ShaderMaterialDescription() = default;
 	ShaderMaterialDescription(godot::Ref<godot::VisualShader> p_shader, int32_t p_render_priority = 0) :
@@ -182,13 +199,25 @@ struct ShaderMaterialDescription {
 	inline bool is_transparent() const { return transparent; }
 	std::string to_string() const;
 
+	inline uint32_t base_program_hash() const {
+		if (shader.is_null()) {
+			return 0;
+		}
+
+		if (shader->get_path().length()) {
+			return godot::HashMapHasherDefault::hash(shader->get_path());
+		}
+		return godot::HashMapHasherDefault::hash(shader.ptr());
+	}
+
 	inline uint32_t hash() {
 		if (shader.is_null()) {
 			return 0;
 		}
 
-		const uint32_t h = godot::HashMapHasherDefault::hash(shader->get_rid().get_id());
-		return use_depth_postpass ? godot::hash_murmur3_one_32(1, h) : h;
+		uint32_t h = godot::HashMapHasherDefault::hash(shader->get_rid().get_id());
+		h = godot::hash_murmur3_one_32(render_priority, h);
+		return depth_pass_mode == DepthPostpass ? godot::hash_murmur3_one_32(1, h) : h;
 	}
 
 	template <std::invocable<uint8_t, const UniformDescriptor &> Fn>
@@ -218,21 +247,25 @@ struct ProgramDescription {
 	ProgramDescription(BaseMaterial3DDescription &&p_descriptor) :
 			material_type(MATERIAL_TYPE_BASE_MATERIAL3D), desc(std::move(p_descriptor)) {
 		hash = std::get<BaseMaterial3DDescription>(desc).hash();
+		base_program_hash = std::get<BaseMaterial3DDescription>(desc).base_program_hash();
 	}
 
 	ProgramDescription(const BaseMaterial3DDescription &p_descriptor) :
 			material_type(MATERIAL_TYPE_BASE_MATERIAL3D), desc(p_descriptor) {
 		hash = std::get<BaseMaterial3DDescription>(desc).hash();
+		base_program_hash = std::get<BaseMaterial3DDescription>(desc).base_program_hash();
 	}
 
 	ProgramDescription(ShaderMaterialDescription &&p_descriptor) :
 			material_type(MATERIAL_TYPE_SHADER_MATERIAL), desc(std::move(p_descriptor)) {
 		hash = std::get<ShaderMaterialDescription>(desc).hash();
+		base_program_hash = std::get<ShaderMaterialDescription>(desc).base_program_hash();
 	}
 
 	ProgramDescription(const ShaderMaterialDescription &p_descriptor) :
 			material_type(MATERIAL_TYPE_SHADER_MATERIAL), desc(p_descriptor) {
 		hash = std::get<ShaderMaterialDescription>(desc).hash();
+		base_program_hash = std::get<ShaderMaterialDescription>(desc).base_program_hash();
 	}
 
 	ProgramDescription(godot::Ref<godot::VisualShader> p_shader) :
@@ -244,7 +277,7 @@ struct ProgramDescription {
 	}
 
 	ProgramDescription(const ProgramDescription &p_desc) :
-			material_type(p_desc.material_type), desc(p_desc.desc), hash(p_desc.hash) {
+			material_type(p_desc.material_type), desc(p_desc.desc), hash(p_desc.hash), base_program_hash(p_desc.base_program_hash) {
 	}
 
 	BaseMaterial3DDescription &asBaseMaterial3D() { return std::get<BaseMaterial3DDescription>(desc); }
@@ -256,16 +289,13 @@ struct ProgramDescription {
 	PD_COMMON_GETTER(bool, is_transparent);
 	PD_COMMON_GETTER(std::string, to_string);
 
-	inline bool use_depth_postpass() const {
-		return material_type == MATERIAL_TYPE_SHADER_MATERIAL ? asShaderMaterial().use_depth_postpass : asBaseMaterial3D().use_depth_postpass;
-	}
-
 	inline bool is_valid() const {
 		return material_type != MATERIAL_TYPE_UNKNOWN;
 	}
 
 	MaterialType material_type;
 	uint32_t hash = 0;
+	uint32_t base_program_hash = 0;
 	std::variant<std::monostate, BaseMaterial3DDescription, ShaderMaterialDescription> desc;
 };
 } //namespace gdrk

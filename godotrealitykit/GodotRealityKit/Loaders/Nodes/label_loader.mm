@@ -15,6 +15,8 @@
 
 #include <godot_cpp/classes/font.hpp>
 #include <godot_cpp/classes/text_server_manager.hpp>
+#include <godot_cpp/classes/theme_db.hpp>
+#include <godot_cpp/templates/hash_set.hpp>
 
 using namespace gdrk;
 
@@ -62,7 +64,48 @@ auto get_label_material_prop_hasher() {
 			make_object_property(&L::get_texture_filter));
 }
 
-ProgramDescription get_label_material_description(godot::Label3D *p_node, bool p_outline) {
+// Match Label3D's fallback behavior when no font is assigned.
+static godot::Ref<godot::Font> get_label_font(godot::Label3D *p_node) {
+	godot::Ref<godot::Font> font = p_node->get_font();
+	if (font.is_null()) {
+		font = godot::ThemeDB::get_singleton()->get_fallback_font();
+	}
+	return font;
+}
+
+// Glyph membership can change while Godot keeps the same atlas RID.
+static uint32_t get_font_atlas_hash(const godot::Ref<godot::Font> &p_font, godot::HashSet<godot::RID> &r_atlas_rids) {
+	const godot::Ref<godot::TextServer> text_server = godot::TextServerManager::get_singleton()->get_primary_interface();
+	if (p_font.is_null() || text_server.is_null()) {
+		return 0;
+	}
+
+	uint32_t hash = HASH_MURMUR3_SEED;
+	const godot::TypedArray<godot::RID> font_rids = p_font->get_rids();
+	for (int font_idx = 0; font_idx < font_rids.size(); font_idx++) {
+		const godot::RID font_rid = font_rids[font_idx];
+		hash = godot::hash_murmur3_one_64(font_rid.get_id(), hash);
+		const godot::TypedArray<godot::Vector2i> sizes = text_server->font_get_size_cache_list(font_rid);
+		for (int size_idx = 0; size_idx < sizes.size(); size_idx++) {
+			const godot::Vector2i size = sizes[size_idx];
+			hash = godot::hash_murmur3_one_32(size.x, hash);
+			hash = godot::hash_murmur3_one_32(size.y, hash);
+			const godot::PackedInt32Array glyphs = text_server->font_get_glyph_list(font_rid, size);
+			for (int glyph_idx = 0; glyph_idx < glyphs.size(); glyph_idx++) {
+				const int32_t glyph = glyphs[glyph_idx];
+				hash = godot::hash_murmur3_one_32(glyph, hash);
+				const godot::RID atlas_rid = text_server->font_get_glyph_texture_rid(font_rid, size, glyph);
+				if (atlas_rid.is_valid()) {
+					r_atlas_rids.insert(atlas_rid);
+					hash = godot::hash_murmur3_one_64(atlas_rid.get_id(), hash);
+				}
+			}
+		}
+	}
+	return godot::hash_fmix32(hash);
+}
+
+ProgramDescription get_label_material_description(godot::Label3D *p_node, bool p_outline, bool p_is_msdf) {
 	using L = godot::Label3D;
 	using BM = godot::BaseMaterial3D;
 	BM::Transparency transparency = BM::TRANSPARENCY_ALPHA;
@@ -85,12 +128,7 @@ ProgramDescription get_label_material_description(godot::Label3D *p_node, bool p
 		flags |= (1 << BM::FLAG_BILLBOARD_KEEP_SCALE);
 	}
 
-	// We currently hope that if this base font RID has MSDF textures,
-	// then the rest of the font variations also use MSDF textures
-	const godot::Ref<godot::Font> font = p_node->get_font();
-	godot::Ref<godot::TextServer> text_server =
-			godot::TextServerManager::get_singleton()->get_primary_interface();
-	if (font.is_valid() && text_server->font_is_multichannel_signed_distance_field(font->get_rid())) {
+	if (p_is_msdf) {
 		flags |= (1 << BM::FLAG_ALBEDO_TEXTURE_MSDF);
 	}
 
@@ -102,7 +140,7 @@ ProgramDescription get_label_material_description(godot::Label3D *p_node, bool p
 		.texture_filter = p_node->get_texture_filter(),
 		.billboard_mode = p_node->get_billboard_mode(),
 		.flags = flags,
-		.use_depth_postpass = true,
+		.depth_pass_mode = DepthPassMode::DepthPostpass,
 	};
 }
 
@@ -126,6 +164,13 @@ void LabelLoader::update_deps(
 		changed_mesh_deps.mark_changed(idx);
 		changed_material_deps.mark_changed(idx);
 	});
+	struct FontAtlasState {
+		godot::Font *font = nullptr;
+		uint32_t hash = 0;
+		godot::HashSet<godot::RID> atlas_rids;
+	};
+	// Cache each font atlas scan for labels that share a font during this update.
+	godot::LocalVector<FontAtlasState> font_atlas_cache;
 	for_each_valid([&](uint32_t idx) {
 		godot::Label3D *node = nodes[idx];
 
@@ -149,16 +194,42 @@ void LabelLoader::update_deps(
 			text_dirty = true;
 		}
 
+		const godot::HashSet<godot::RID> *font_atlas_rids = nullptr;
+		uint32_t font_atlas_hash = dep_states[idx].font_atlas_hash;
+		bool font_atlas_dirty = false;
+		if (text_dirty) {
+			const godot::Ref<godot::Font> font = get_label_font(node);
+			for (FontAtlasState &state : font_atlas_cache) {
+				if (state.font == font.ptr()) {
+					font_atlas_hash = state.hash;
+					font_atlas_rids = &state.atlas_rids;
+					break;
+				}
+			}
+			if (font_atlas_rids == nullptr) {
+				FontAtlasState state;
+				state.font = font.ptr();
+				state.hash = get_font_atlas_hash(font, state.atlas_rids);
+				font_atlas_cache.push_back(std::move(state));
+				font_atlas_hash = font_atlas_cache[font_atlas_cache.size() - 1].hash;
+				font_atlas_rids = &font_atlas_cache[font_atlas_cache.size() - 1].atlas_rids;
+			}
+			font_atlas_dirty = dep_states[idx].font_atlas_hash != font_atlas_hash;
+		}
+
 		// We mix the text properties hash into the material propeties hash, since if the text needs to be reloaded
 		// the the material also needs to be reloaded to reference a potentially new font atlas texture (with a separate RID).
 		// We also mark the font atlas texture(s) for each material as dirty here too.
 		const uint32_t material_hash = godot::hash_fmix32(material_hash_state);
 		if (dep_states[idx].material_hash != material_hash || text_dirty) {
 			bool is_outline = false;
-			ProgramDescription material_description = get_label_material_description(node, false);
-			ProgramDescription outline_material_description = get_label_material_description(node, true);
 			for (uint32_t material_idx : add_material_deps(changed_material_deps, materials, idx, node)) {
-				ProgramDescription desc = is_outline ? outline_material_description : material_description;
+				const godot::RID material_rid = materials->get_rid(material_idx);
+				ERR_CONTINUE(!material_rid.is_valid());
+				const godot::RID albedo_texture_rid = rs->material_get_param(material_rid, "texture_albedo");
+				// Generated surfaces can use different atlas formats.
+				const bool is_msdf = rs->material_get_param(material_rid, "msdf_pixel_range").get_type() != godot::Variant::NIL;
+				ProgramDescription desc = get_label_material_description(node, is_outline, is_msdf);
 				if (!is_outline) {
 					is_outline = true;
 				}
@@ -166,11 +237,7 @@ void LabelLoader::update_deps(
 				materials->set_description(material_idx, std::move(desc));
 				materials->mark_dirty(material_idx);
 
-				if (text_dirty) {
-					const godot::RID material_rid = materials->get_rid(material_idx);
-					ERR_CONTINUE(!material_rid.is_valid());
-
-					const godot::RID albedo_texture_rid = rs->material_get_param(material_rid, "texture_albedo");
+				if (font_atlas_dirty || (text_dirty && !font_atlas_rids->has(albedo_texture_rid))) {
 					if (albedo_texture_rid.is_valid()) {
 						const uint32_t albedo_texture_idx = textures->find_or_add(albedo_texture_rid);
 						textures->mark_dirty(albedo_texture_idx);
@@ -180,6 +247,7 @@ void LabelLoader::update_deps(
 
 			dep_states[idx].material_hash = material_hash;
 		}
+		dep_states[idx].font_atlas_hash = font_atlas_hash;
 	});
 
 	mesh_deps.replace_changed(changed_mesh_deps, meshes);
@@ -237,6 +305,19 @@ void LabelLoader::update(const ResourceLoaderSet &p_resource_loaders) {
 	for_each_dirty([&](uint32_t idx) {
 		godot::Label3D *node = nodes[idx];
 		ERR_FAIL_NULL(node);
+
+		// Wait for every surface to avoid invalid access and partial replacement.
+		const godot::RID mesh_rid = node->get_base();
+		const uint32_t surface_count = mesh_get_surface_count(mesh_rid);
+		for (uint32_t surface_idx = 0; surface_idx < surface_count; surface_idx++) {
+			if (!meshes->find_resource(mesh_rid, 0, surface_idx).isSome()) {
+				return;
+			}
+			const godot::RID material_rid = get_surface_material(node, surface_idx).rid;
+			if (material_rid.is_valid() && materials->is_loading(material_rid, DepthPassMode::DepthPostpass)) {
+				return;
+			}
+		}
 
 		node_entities[idx].entity.clearChildren();
 		for (GodotRealityKit::Entity child : node_to_entities(node, meshes, materials, multimeshes)) {

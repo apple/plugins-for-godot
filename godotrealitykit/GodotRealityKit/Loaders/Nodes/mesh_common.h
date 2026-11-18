@@ -29,11 +29,16 @@ class MeshInstance3D;
 namespace gdrk {
 
 template <typename GeometryInstanceNode>
-inline constexpr bool node_uses_depth_postpass =
-		std::is_same_v<GeometryInstanceNode, godot::MultiMeshInstance3D> ||
-		std::is_same_v<GeometryInstanceNode, godot::CPUParticles3D> ||
-		std::is_same_v<GeometryInstanceNode, godot::Label3D> ||
-		std::is_same_v<GeometryInstanceNode, godot::Sprite3D>;
+inline constexpr DepthPassMode node_depth_pass_mode = DepthPassMode::DepthPrepass;
+
+#define SET_DEPTH_POST_PASS(class) \
+	template <>                    \
+	inline constexpr DepthPassMode node_depth_pass_mode<godot::class> = DepthPassMode::DepthPostpass;
+
+SET_DEPTH_POST_PASS(MultiMeshInstance3D)
+SET_DEPTH_POST_PASS(CPUParticles3D)
+SET_DEPTH_POST_PASS(Label3D)
+SET_DEPTH_POST_PASS(Sprite3D)
 
 struct MultiMeshDependencyState {
 	uint32_t mesh_hash = 0;
@@ -153,6 +158,9 @@ static inline uint64_t get_surface_material_hash_state(
 }
 
 static inline uint32_t mesh_get_surface_count(godot::RID p_mesh_rid) {
+	if (!p_mesh_rid.is_valid()) {
+		return 0;
+	}
 	godot::RenderingServer *rs = rendering_server();
 	return rs->mesh_get_surface_count(p_mesh_rid);
 }
@@ -160,7 +168,7 @@ static inline uint32_t mesh_get_surface_count(godot::RID p_mesh_rid) {
 template <std::derived_from<godot::GeometryInstance3D> GeometryInstanceNode>
 static inline uint32_t mesh_get_surface_count(GeometryInstanceNode *p_vi) {
 	const auto [mesh_rid, mesh] = get_mesh<true>(p_vi);
-	return mesh_rid.is_valid() ? mesh_get_surface_count(mesh_rid) : 0;
+	return mesh_get_surface_count(mesh_rid);
 }
 
 inline static void accum_mesh_hash(const godot::RID &p_mesh_rid,
@@ -173,8 +181,7 @@ inline static void accum_mesh_hash(const godot::RID &p_mesh_rid,
 		p_mesh_hash_state = godot::hash_murmur3_one_64(p_skeleton_rid_id, p_mesh_hash_state);
 	}
 
-	const godot::RenderingServer *rs = rendering_server();
-	const uint32_t surface_count = rs->mesh_get_surface_count(p_mesh_rid);
+	const uint32_t surface_count = mesh_get_surface_count(p_mesh_rid);
 	for (uint32_t surface_idx = 0; surface_idx < surface_count; surface_idx++) {
 		const uint64_t material_hash = get_surface_material_hash_state(p_mesh_rid, surface_idx);
 		p_material_hash_state = godot::hash_murmur3_one_64(material_hash, p_material_hash_state);
@@ -198,8 +205,7 @@ inline static void accum_mesh_hash(
 		p_mesh_hash_state = godot::hash_murmur3_one_64(skeleton_rid_id, p_mesh_hash_state);
 	}
 
-	const godot::RenderingServer *rs = rendering_server();
-	const uint32_t surface_count = rs->mesh_get_surface_count(mesh_rid);
+	const uint32_t surface_count = mesh_get_surface_count(mesh_rid);
 	for (uint32_t surface_idx = 0; surface_idx < surface_count; surface_idx++) {
 		const uint64_t material_hash = get_surface_material_hash_state(p_vi, surface_idx);
 		p_material_hash_state = godot::hash_murmur3_one_64(material_hash, p_material_hash_state);
@@ -213,7 +219,7 @@ inline static GodotRealityKit::Entity mesh_surface_to_entity(
 		godot::RID p_material_rid,
 		const MeshLoader *p_meshes,
 		const MaterialLoader *p_materials,
-		bool p_use_depth_postpass = false) {
+		DepthPassMode p_depth_pass_mode = DepthPassMode::DepthPrepass) {
 	if (!p_mesh_rid.is_valid()) {
 		return GodotRealityKit::Entity::initAndMaterialize();
 	}
@@ -223,12 +229,12 @@ inline static GodotRealityKit::Entity mesh_surface_to_entity(
 			p_meshes->find_resource(p_mesh_rid, p_instance_id, p_surface_idx);
 	ERR_FAIL_COND_V(!mesh_resource.isSome(), GodotRealityKit::Entity::initAndMaterialize());
 
-	if (p_material_rid.is_valid() && p_materials->is_loading(p_material_rid, p_use_depth_postpass)) {
+	if (p_material_rid.is_valid() && p_materials->is_loading(p_material_rid, p_depth_pass_mode)) {
 		return GodotRealityKit::Entity::initAndMaterialize();
 	}
 
 	swift::Array<GodotRealityKit::SGLMaterial> material_resources =
-			swift::Array<GodotRealityKit::SGLMaterial>::init(p_materials->find_resource(p_material_rid, p_use_depth_postpass), 1);
+			swift::Array<GodotRealityKit::SGLMaterial>::init(p_materials->find_resource(p_material_rid, p_depth_pass_mode), 1);
 
 	entity.setModel(mesh_resource, material_resources);
 	return entity;
@@ -254,7 +260,7 @@ inline static GodotRealityKit::Entity mesh_compacted_to_entity(
 		return GodotRealityKit::Entity::initAndMaterialize();
 	}
 
-	constexpr bool use_depth_postpass = node_uses_depth_postpass<GeometryInstanceNode>;
+	constexpr DepthPassMode depth_pass_mode = node_depth_pass_mode<GeometryInstanceNode>;
 
 	const GodotRealityKit::Entity entity = GodotRealityKit::Entity::initAndMaterialize();
 	GodotRealityKit::MeshResource mesh_resource = p_meshes->find_compacted_resource(mesh_rid, instance_id);
@@ -270,10 +276,10 @@ inline static GodotRealityKit::Entity mesh_compacted_to_entity(
 			swift::Array<GodotRealityKit::SGLMaterial>::init();
 	for (uint32_t surface_idx = 0; surface_idx < surface_count; surface_idx++) {
 		const auto [material_rid, material] = get_surface_material(p_vi, surface_idx);
-		if (material_rid.is_valid() && p_materials->is_loading(material_rid, use_depth_postpass)) {
+		if (material_rid.is_valid() && p_materials->is_loading(material_rid, depth_pass_mode)) {
 			return GodotRealityKit::Entity::initAndMaterialize();
 		}
-		material_resources.append(p_materials->find_resource(material_rid, use_depth_postpass));
+		material_resources.append(p_materials->find_resource(material_rid, depth_pass_mode));
 	}
 
 	entity.setModel(mesh_resource, material_resources);
@@ -314,7 +320,7 @@ inline static GodotRealityKit::Entity mesh_surface_to_entity(
 
 	const auto [material_rid, material] = get_surface_material(p_vi, p_surface_idx);
 	const GodotRealityKit::Entity entity = mesh_surface_to_entity(
-			mesh_rid, instance_id, p_surface_idx, material_rid, p_meshes, p_materials, node_uses_depth_postpass<GeometryInstanceNode>);
+			mesh_rid, instance_id, p_surface_idx, material_rid, p_meshes, p_materials, node_depth_pass_mode<GeometryInstanceNode>);
 
 	if constexpr (std::is_same_v<GeometryInstanceNode, godot::MultiMeshInstance3D> ||
 			std::is_same_v<GeometryInstanceNode, godot::CPUParticles3D>) {
@@ -477,12 +483,12 @@ inline static SmallLocalVector<uint32_t, 8> add_material_deps(
 		const GeometryInstanceNode *p_vi) {
 	p_changed_material_deps.mark_changed(p_node_idx);
 
-	constexpr bool use_depth_postpass = node_uses_depth_postpass<GeometryInstanceNode>;
+	constexpr DepthPassMode depth_pass_mode = node_depth_pass_mode<GeometryInstanceNode>;
 
 	SmallLocalVector<uint32_t, 8> res;
 	for (uint32_t surface_idx = 0; surface_idx < mesh_get_surface_count(p_vi); surface_idx++) {
 		const auto [material_rid, material] = get_surface_material(p_vi, surface_idx);
-		const uint32_t material_idx = p_materials->find_or_add(material_rid, material, use_depth_postpass);
+		const uint32_t material_idx = p_materials->find_or_add(material_rid, material, depth_pass_mode);
 		p_changed_material_deps.add_changed_dep(material_idx, p_node_idx);
 		res.push_back(material_idx);
 	}

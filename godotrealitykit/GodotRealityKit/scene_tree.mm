@@ -66,10 +66,10 @@ MaterialLoader *SceneLoader::get_materials() {
 	return std::get<MaterialLoader *>(resource_loaders);
 }
 
-void SceneLoader::initialize(godot::Node *p_node, GodotRealityKit::Entity p_entity) {
+void SceneLoader::initialize(RealitySceneTree *p_scene_tree, GodotRealityKit::Entity p_entity) {
 	PROFILE_FUNC_SCOPE;
 
-	root_node = p_node;
+	scene_tree = p_scene_tree;
 	root_entity = p_entity;
 
 	const uint32_t frame_delay = rendering_device()->get_frame_delay();
@@ -318,7 +318,7 @@ void RealitySceneTree::_initialize() {
 	}
 
 	loader = memnew(SceneLoader);
-	loader->initialize(get_current_scene(), bridge.getRoot());
+	loader->initialize(this, bridge.getRoot());
 	connect("node_added", callable_mp(loader->get_nodes(), &gdrk::NodeLoaders::node_added));
 	connect("node_removed", callable_mp(loader->get_nodes(), &gdrk::NodeLoaders::node_removed));
 
@@ -375,7 +375,11 @@ bool RealitySceneTree::_process(double p_time) {
 	rendering_server()->viewport_set_update_mode(viewport_rid, godot::RenderingServer::VIEWPORT_UPDATE_DISABLED);
 
 	// Early exit if the game is paused while we wait for blocking async tasks
-	godot::SceneTree *scene_tree = loader->get_root_node()->get_tree();
+	RealitySceneTree *scene_tree = loader->get_scene_tree();
+	if (!scene_tree) {
+		return false;
+	}
+
 	if (GodotRealityKit::isBlockingAsyncTaskRunning()) {
 		if (!paused_for_blocking_task) {
 			scene_tree->set_pause(true);

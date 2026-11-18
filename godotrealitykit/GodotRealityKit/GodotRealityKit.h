@@ -123,6 +123,7 @@ public:
 		float portalWorldScale; // 0 means unset; use the interactive slider instead.
 
 		bool should_convert_world_environment() const;
+		bool should_convert_skybox() const;
 	};
 
 	ExtensionSettings getExtensionSettings() const;
@@ -140,6 +141,8 @@ public:
 	void *getCameraEntity() const;
 
 	void onWorldScaleChanged(float p_scale) const;
+
+	void onExtraLightFrustumScaleChanged(float p_scale) const;
 
 #if TARGET_OS_OSX
 	void onWindowResized(simd_float2 p_new_size) const;

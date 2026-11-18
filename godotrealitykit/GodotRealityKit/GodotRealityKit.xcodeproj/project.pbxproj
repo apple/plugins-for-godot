@@ -14,8 +14,8 @@
 		B8873A342E6F3AB600B35C1D /* utility.h in Headers */ = {isa = PBXBuildFile; fileRef = B8873A332E6F3AB600B35C1D /* utility.h */; };
 		B893B8452E8ECE2E0015F365 /* config.h in Headers */ = {isa = PBXBuildFile; fileRef = B893B8442E8ECE2C0015F365 /* config.h */; };
 		B893BA212E8F73C70015F365 /* utility.mm in Sources */ = {isa = PBXBuildFile; fileRef = B893BA202E8F73C30015F365 /* utility.mm */; };
-		B8FF1796172800000017961A /* gdt_renderer_relaunch_guard.mm in Sources */ = {isa = PBXBuildFile; fileRef = B8FF1796172800000017961B /* gdt_renderer_relaunch_guard.mm */; };
 		B8D05ACA2EE0A2D2001FD77C /* types.h in Headers */ = {isa = PBXBuildFile; fileRef = B8D05AC92EE0A2D2001FD77C /* types.h */; };
+		B8FF1796172800000017961A /* gdt_renderer_relaunch_guard.mm in Sources */ = {isa = PBXBuildFile; fileRef = B8FF1796172800000017961B /* gdt_renderer_relaunch_guard.mm */; };
 		EE0B780E2E7497D80041559B /* scene_tree.mm in Sources */ = {isa = PBXBuildFile; fileRef = EE0B780D2E7497D40041559B /* scene_tree.mm */; };
 		EE5ABED92E45D889003CD7D3 /* RealityKitUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE5ABED82E45D889003CD7D3 /* RealityKitUtils.swift */; };
 		EE5AD3202E7104E4001C1DBB /* scene_tree.h in Headers */ = {isa = PBXBuildFile; fileRef = EE5AD31F2E7104DB001C1DBB /* scene_tree.h */; };
@@ -32,9 +32,9 @@
 		B8873A332E6F3AB600B35C1D /* utility.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.h; path = utility.h; sourceTree = "<group>"; };
 		B893B8442E8ECE2C0015F365 /* config.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = config.h; sourceTree = "<group>"; };
 		B893BA202E8F73C30015F365 /* utility.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = utility.mm; sourceTree = "<group>"; };
-		B8FF1796172800000017961B /* gdt_renderer_relaunch_guard.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = gdt_renderer_relaunch_guard.mm; sourceTree = "<group>"; };
 		B8A3A14C2E8B364D008C24BA /* godot.macos.template_debug.arm64 */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; name = godot.macos.template_debug.arm64; path = ../out/shared_workspace/deps/debug/godot/bin/godot.macos.template_debug.arm64; sourceTree = "<group>"; };
 		B8D05AC92EE0A2D2001FD77C /* types.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = types.h; sourceTree = "<group>"; };
+		B8FF1796172800000017961B /* gdt_renderer_relaunch_guard.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = gdt_renderer_relaunch_guard.mm; sourceTree = "<group>"; };
 		EE0B780D2E7497D40041559B /* scene_tree.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = scene_tree.mm; sourceTree = "<group>"; };
 		EE5ABED82E45D889003CD7D3 /* RealityKitUtils.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealityKitUtils.swift; sourceTree = "<group>"; };
 		EE5AD31F2E7104DB001C1DBB /* scene_tree.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = scene_tree.h; sourceTree = "<group>"; };

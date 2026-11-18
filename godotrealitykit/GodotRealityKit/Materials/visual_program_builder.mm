@@ -496,6 +496,7 @@ void VisualProgramBuilder::generate_sgl() {
 
 #if PRINT_SGL_CODE
 	UtilityFunctions::print("Generated code: ////////////////////////////////////////////////////////");
+	UtilityFunctions::print(context.material_description->shader->get_path());
 	print_code(context.code_parts);
 	UtilityFunctions::print("////////////////////////////////////////////////////////");
 #endif
@@ -602,7 +603,7 @@ void VisualProgramBuilder::finalize(ShaderMaterialDescription &p_desc, GodotReal
 
 	if (is_transparent) {
 		p_program.setSortOrder(p_desc.render_priority);
-		p_program.setSortGroup(p_desc.use_depth_postpass ? 2 : 1); // depth postPass vs. standard transparency
+		p_program.setSortGroup(p_desc.depth_pass_mode == DepthPassMode::DepthPostpass ? 2 : 1); // depth postPass vs. standard transparency
 	}
 
 	p_program.setReadsDepth(!no_depth_test);

@@ -519,11 +519,27 @@ bool BaseMaterialBuilder::build(swift::Array<GodotRealityKit::ProgramPart> &p_pr
 
 	if (d.get_feature(BM::FEATURE_EMISSION)) {
 		SG(
-				let emission_tex = c4_rgb(sample_tex2d_uv1_c4(texture_emission, (1.0h, 1.0h, 1.0h, 1.0h)c));
 				let emission_energy_c3 = ND_combine3_color3(emission_energy,
 						emission_energy,
-						emission_energy);
-				let emission_color = ND_multiply_color3(ND_multiply_color3(c4_rgb(emission_color), emission_tex), emission_energy_c3);)
+						emission_energy);)
+
+		if (!d.has_emission_texture) {
+			if (d.emission_op == BM::EMISSION_OP_MULTIPLY) {
+				SG(let emission_color = (0.0h, 0.0h, 0.0h)c;)
+			} else {
+				SG(let emission_color = c4_rgb(emission_color);)
+			}
+		} else if (d.emission_op == BM::EMISSION_OP_MULTIPLY) {
+			SG(
+					let emission_tex = c4_rgb(sample_tex2d_uv1_c4(texture_emission, (0.0h, 0.0h, 0.0h, 1.0h)c));
+					let emission_color = ND_multiply_color3(c4_rgb(emission_color), emission_tex);)
+		} else {
+			SG(
+					let emission_tex = c4_rgb(sample_tex2d_uv1_c4(texture_emission, (0.0h, 0.0h, 0.0h, 1.0h)c));
+					let emission_color = ND_add_color3(c4_rgb(emission_color), emission_tex);)
+		}
+
+		SG(let emission_color = ND_multiply_color3(emission_color, emission_energy_c3);)
 	} else {
 		SG(let emission_color = (0.0h, 0.0h, 0.0h)c;)
 	}
@@ -720,7 +736,7 @@ void BaseMaterialBuilder::finalize(const BaseMaterial3DDescription &p_descriptio
 	const bool is_billboard = p_description.billboard_mode != BM::BILLBOARD_DISABLED;
 	const float bounds_multiplier = is_billboard && !p_description.get_flag(BM::FLAG_BILLBOARD_KEEP_SCALE) ? 100.0f : 1.0f;
 	if (is_transparent) {
-		p_program.setSortGroup(p_description.use_depth_postpass ? 2 : 1); // depth postPass vs. standard transparency
+		p_program.setSortGroup(p_description.depth_pass_mode == DepthPassMode::DepthPostpass ? 2 : 1); // depth postPass vs. standard transparency
 	}
 
 	p_program.setSortOrder(sort_order);

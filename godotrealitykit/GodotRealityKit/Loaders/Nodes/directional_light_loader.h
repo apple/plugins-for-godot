@@ -38,6 +38,8 @@ public:
 
 	void set_world_scale(float value) { world_scale = value; }
 
+	void set_extra_light_frustum_scale(float value) { extra_light_frustum_scale = value; }
+
 	// Called by RealityKitDirectionalLightShadow3DLoader when a shadow node is
 	// added or removed under this light. Pass nullptr to reset to automatic shadow.
 	void setFixedShadow(godot::DirectionalLight3D *p_parent, RealityKitDirectionalLightShadow3D *p_shadow_node);
@@ -51,6 +53,7 @@ private:
 	};
 
 	float world_scale = 1.0;
+	float extra_light_frustum_scale = 1.0;
 	godot::LocalVector<DependencyState> dep_states;
 };
 } //namespace gdrk

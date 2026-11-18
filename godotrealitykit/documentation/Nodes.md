@@ -64,6 +64,26 @@ MySubScene
   +-- MeshInstance3D  (lit by the IBL above)
 ```
 
+### RealityKitEnvironmentLightingConfiguration
+
+Controls how much the environment lighting (coming from either the AR environment or the virtual System Environment) affects a node and its descendants, on top of the image-based lighting defined by the app. Wraps RealityKit's `EnvironmentLightingConfigurationComponent`.
+
+- **environment_lighting_weight** — How much the system lighting contributes, from 0.0 (none) to 1.0 (full, default).
+
+The configuration applies to its parent and all of the parent's descendants. When the parent is a `WorldEnvironment`, it applies to the whole scene. A configuration nested deeper in the tree overrides the one above it. Only one configuration is supported per parent.
+
+```
+WorldEnvironment
+  +-- RealityKitEnvironmentLightingConfiguration  (whole scene)
+
+MySubScene
+  +-- RealityImageBasedLight3D
+  +-- RealityKitEnvironmentLightingConfiguration  (MySubScene and its descendants)
+  +-- MeshInstance3D
+```
+
+The system lighting only exists on visionOS, so the weight has no visible effect on macOS.
+
 ### RealityKitDirectionalLightShadow3D
 
 ![Directional light shadow map captured from a GodotRealityKit scene, showing the orthographic shadow projection](./screenshots/ShadowMap.png)

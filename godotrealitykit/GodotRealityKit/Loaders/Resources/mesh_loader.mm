@@ -187,6 +187,7 @@ void MeshLoader::set_skin(uint32_t p_idx, const godot::Ref<godot::Skin> &p_skin)
 		return;
 	}
 	mesh.skin = p_skin;
+	mesh.resolved_binds.clear();
 	mesh_needs_reencoding.insert(p_idx);
 }
 
@@ -213,7 +214,7 @@ void MeshLoader::prepare_frame_changes() {
 		// Force reload of surfaces
 		mesh.surfaces.reset();
 
-		const uint32_t surface_count = rs->mesh_get_surface_count(mesh.mesh_rid);
+		const uint32_t surface_count = mesh.mesh_rid.is_valid() ? rs->mesh_get_surface_count(mesh.mesh_rid) : 0;
 		mesh.surface_infos.reserve(surface_count);
 		mesh.surface_infos.reset();
 		for (uint32_t surface_idx = 0; surface_idx < surface_count; surface_idx++) {
@@ -437,13 +438,23 @@ bool MeshLoader::update(id<MTLCommandBuffer> p_command_buffer) {
 		return LocalBitVector::IterationResult::PROCESSED;
 	});
 
-	if (skeletons->has_dirty()) {
-		for (uint32_t idx = 0; idx < get_capacity(); idx++) {
-			if (is_valid(idx) && skeletons->is_dirty(meshes[idx].skeleton_idx)) {
-				mesh_needs_reencoding.insert(idx);
-			}
+	for_each_valid([&](uint32_t idx) {
+		if (idx >= next_dirty_idx) {
+			return;
 		}
-	}
+
+		if (!is_used_in_frame(idx)) {
+			return;
+		}
+		const Mesh &mesh = meshes[idx];
+		if (mesh.skeleton_idx == UINT32_MAX) {
+			return;
+		}
+		if (skeletons->is_dirty(mesh.skeleton_idx)) {
+			mesh_needs_reencoding.insert(idx);
+		}
+		skeletons->mark_used_in_frame(mesh.skeleton_idx);
+	});
 
 	mesh_needs_reencoding.for_each([&](uint32_t idx) {
 		if (idx >= next_dirty_idx) {

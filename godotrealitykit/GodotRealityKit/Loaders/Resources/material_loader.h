@@ -37,7 +37,7 @@ public:
 		return "res://.godot/bm_variants.dict";
 	}
 
-	static ProgramDescription program_description_for_material(const godot::Material &p_material, bool p_use_depth_postpass = false);
+	static ProgramDescription program_description_for_material(const godot::Material &p_material, DepthPassMode p_depth_pass_mode = DepthPassMode::DepthPrepass);
 
 	void _reserve(uint32_t p_capacity) {
 		ResourceLoader<MaterialLoader>::_reserve(p_capacity);
@@ -45,20 +45,17 @@ public:
 		material_dep_states.resize(p_capacity);
 	}
 
-	uint32_t find(godot::RID p_material_rid) const {
-		return material_rid_to_idx.has(p_material_rid) ? material_rid_to_idx.get(p_material_rid) : UINT32_MAX;
+	uint32_t find(godot::RID p_material_rid, DepthPassMode p_depth_pass_mode = DepthPassMode::DepthPrepass) const {
+		auto &rid_to_idx = material_rid_to_idx[p_depth_pass_mode];
+		return rid_to_idx.has(p_material_rid) ? rid_to_idx.get(p_material_rid) : UINT32_MAX;
 	}
 
-	uint32_t find_or_add(godot::RID p_material_rid, godot::Ref<godot::Material> p_material, bool p_use_depth_postpass = false);
+	uint32_t find_or_add(godot::RID p_material_rid, godot::Ref<godot::Material> p_material, DepthPassMode p_depth_pass_mode = DepthPassMode::DepthPrepass);
 
-	const ProgramDescription &get_description(uint32_t p_index, bool p_use_depth_postpass = false) const {
-		return materials[p_index].variants[variant_index(p_use_depth_postpass)].description;
+	const ProgramDescription &get_description(uint32_t p_index) const {
+		return materials[p_index].description;
 	}
-
-	bool set_description(uint32_t p_idx, ProgramDescription &&p_description) {
-		const bool use_depth_postpass = p_description.use_depth_postpass();
-		return set_variant_description(p_idx, variant_index(use_depth_postpass), std::move(p_description));
-	}
+	bool set_description(uint32_t p_idx, ProgramDescription &&p_description);
 
 	godot::RID get_rid(uint32_t p_idx) const { return materials[p_idx].material_rid; }
 
@@ -67,7 +64,8 @@ public:
 		if (material) {
 			disconnect_changed(material, p_idx);
 		}
-		material_rid_to_idx.remove(materials[p_idx].material_rid);
+		DepthPassMode mode = materials[p_idx].depth_pass_mode;
+		material_rid_to_idx[mode].remove(materials[p_idx].material_rid);
 		materials[p_idx].material = nullptr;
 		free_idx(p_idx);
 	}
@@ -77,32 +75,40 @@ public:
 		ResourceLoader<MaterialLoader>::changed(p_idx);
 	}
 
+	inline bool has_programs_loading() const { return program_cache.has_loading(); }
+	inline uint32_t get_base_program_count() const { return program_cache.base_program_count(); }
+	inline uint32_t get_program_count() const { return program_cache.program_count(); }
+	inline void preload(godot::String p_path) { program_cache.preload_program(p_path); }
+
 	void update_deps(TextureLoader *p_textures);
 	bool update(id<MTLCommandBuffer> p_command_buffer, TextureLoader *p_textures);
-	bool has_programs_loading() const { return program_cache.has_loading(); }
+	void reset_program_cache();
 
-	GodotRealityKit::SGLMaterial get_resource(uint32_t p_idx, bool p_use_depth_postpass = false) const {
-		const GodotRealityKit::SGLMaterial &resource = materials[p_idx].variants[variant_index(p_use_depth_postpass)].resource;
+	GodotRealityKit::SGLMaterial get_resource(uint32_t p_idx) const {
+		const GodotRealityKit::SGLMaterial &resource = materials[p_idx].resource;
 		if (const_cast<GodotRealityKit::SGLMaterial &>(resource).isLoading()) {
 			return GodotRealityKit::SGLMaterial::init();
 		}
 		return resource;
 	}
 
-	GodotRealityKit::SGLMaterial find_resource(godot::RID p_material_rid, bool p_use_depth_postpass = false) const {
-		ERR_FAIL_COND_V(p_material_rid.is_valid() && !material_rid_to_idx.has(p_material_rid), GodotRealityKit::SGLMaterial::init());
+	GodotRealityKit::SGLMaterial find_resource(godot::RID p_material_rid, DepthPassMode p_depth_pass_mode = DepthPassMode::DepthPrepass) const {
+		ERR_FAIL_COND_V(p_material_rid.is_valid() && !material_rid_to_idx[p_depth_pass_mode].has(p_material_rid), GodotRealityKit::SGLMaterial::init());
 
 		if (!p_material_rid.is_valid()) {
-			return get_resource(default_material_idx, false);
+			return get_resource(default_material_idx);
 		}
-		return get_resource(material_rid_to_idx.get(p_material_rid), p_use_depth_postpass);
+		return get_resource(material_rid_to_idx[p_depth_pass_mode].get(p_material_rid));
 	}
 
-	bool is_loading(godot::RID p_material_rid, bool p_use_depth_postpass = false) const {
-		const uint32_t idx = material_rid_to_idx.get(p_material_rid);
-		return materials[idx].is_loading(p_use_depth_postpass);
-	}
+	bool is_loading(godot::RID p_material_rid, DepthPassMode p_depth_pass_mode = DepthPassMode::DepthPrepass) const {
+		if (!material_rid_to_idx[p_depth_pass_mode].has(p_material_rid)) {
+			return true;
+		}
 
+		const uint32_t idx = material_rid_to_idx[p_depth_pass_mode].get(p_material_rid);
+		return materials[idx].is_loading();
+	}
 	void set_world_scale(float p_world_scale);
 
 	void reset_dirty() {
@@ -110,24 +116,24 @@ public:
 	}
 
 private:
-	struct ProgramVariant {
-		uint32_t program_idx = UINT32_MAX;
-		ProgramDescription description;
-		GodotRealityKit::SGLMaterial resource = GodotRealityKit::SGLMaterial::init();
-		bool requested = false;
-
-		inline bool is_loading() const {
-			return requested && program_idx != UINT32_MAX && const_cast<GodotRealityKit::SGLMaterial &>(resource).isLoading();
-		}
-	};
-
 	struct Material {
 		godot::RID material_rid;
 		godot::Ref<godot::Material> material = nullptr;
-		ProgramVariant variants[2];
+		uint32_t program_idx = UINT32_MAX;
+		DepthPassMode depth_pass_mode;
+		ProgramDescription description;
+		GodotRealityKit::SGLMaterial resource = GodotRealityKit::SGLMaterial::init();
 
-		inline bool is_loading(bool p_use_depth_postpass) const {
-			return variants[variant_index(p_use_depth_postpass)].is_loading();
+		inline bool is_registered() {
+			return program_idx != UINT32_MAX;
+		}
+
+		inline bool is_loading() const {
+			return const_cast<GodotRealityKit::SGLMaterial &>(resource).isLoading();
+		}
+
+		inline bool is_loaded() const {
+			return !is_loading();
 		}
 	};
 
@@ -135,51 +141,20 @@ private:
 		uint32_t texture_hash = 0;
 	};
 
-	static inline uint32_t variant_index(bool p_use_depth_postpass) { return p_use_depth_postpass ? 1 : 0; }
-
-	const ProgramDescription *get_requested_description(uint32_t p_idx) const {
-		const Material &mat = materials[p_idx];
-		if (mat.variants[0].requested) {
-			return &mat.variants[0].description;
-		}
-		if (mat.variants[1].requested) {
-			return &mat.variants[1].description;
-		}
-		return nullptr;
-	}
-
-	bool set_variant_description(uint32_t p_idx, uint32_t p_variant, ProgramDescription &&p_description) {
-		ProgramVariant &variant = materials[p_idx].variants[p_variant];
-		variant.requested = true;
-		if (p_description.hash != variant.description.hash) {
-			variant.description = std::move(p_description);
-			variant.program_idx = UINT32_MAX;
-			variant.resource = GodotRealityKit::SGLMaterial::init();
-			mark_dirty(p_idx);
-			return true;
-		}
-		return false;
-	}
-
-	void request_variant(uint32_t p_idx, bool p_use_depth_postpass, const godot::Material &p_material) {
-		const uint32_t variant = variant_index(p_use_depth_postpass);
-		if (materials[p_idx].variants[variant].requested) {
-			return;
-		}
-		set_variant_description(p_idx, variant, program_description_for_material(p_material, p_use_depth_postpass));
-	}
-
 	void update_description(uint32_t p_index);
 	void update_constants(const TextureLoader &p_textures, uint32_t p_index);
 	void update_parameters(TextureLoader &p_textures, uint32_t p_index);
 
 	void on_program_loaded(uint32_t program_index);
-	void update_default_texture_deps(TextureLoader *p_textures, ChangedDependencyListSet &p_changed_texture_deps, uint32_t p_index, const ProgramDescription &p_desc);
-	void update_parameter_texture_deps(TextureLoader *p_textures, ChangedDependencyListSet &p_changed_texture_deps, uint32_t p_index, godot::Material *p_material);
+	void update_default_texture_deps(TextureLoader *p_textures, ChangedDependencyListSet &p_changed_texture_deps, uint32_t p_index);
+	void update_parameter_texture_deps(TextureLoader *p_textures, ChangedDependencyListSet &p_changed_texture_deps, uint32_t p_index);
 
 private:
 	ProgramCache program_cache;
-	RID_Associated<uint32_t> material_rid_to_idx;
+
+	// One for the depth prepass, one for the depth postpass
+	RID_Associated<uint32_t> material_rid_to_idx[DepthPassMode::DepthPassModeCount];
+
 	godot::LocalVector<Material> materials;
 	godot::LocalVector<DependencyState> material_dep_states;
 	DependencyList texture_deps;

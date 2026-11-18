@@ -41,9 +41,10 @@ void DirectionalLightLoader::update(const ResourceLoaderSet &p_resource_loaders)
 
 		if (state.shadow_node) {
 			RealityKitDirectionalLightShadow3D *sn = state.shadow_node;
-			float z_near = sn->get_z_near() * world_scale;
-			float z_far = sn->get_z_far() * world_scale;
-			float orthographic_scale = sn->get_orthographic_scale() * world_scale;
+			const float extent_scale = world_scale * extra_light_frustum_scale;
+			float z_near = sn->get_z_near() * extent_scale;
+			float z_far = sn->get_z_far() * extent_scale;
+			float orthographic_scale = sn->get_orthographic_scale() * extent_scale;
 			float depth_bias = sn->get_depth_bias();
 
 			if (!shadow_enabled) {

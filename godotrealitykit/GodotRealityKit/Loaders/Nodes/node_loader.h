@@ -80,6 +80,11 @@ public:
 		return old_rid;
 	}
 
+	template <typename Effect>
+	godot::RID get_effect_rid(uint32_t p_idx) const {
+		return node_effect_rids_set.template get<Effect>()[p_idx];
+	}
+
 	_FORCE_INLINE_ Node *cast(godot::Node *p_node) const {
 		return godot::Object::cast_to<Node>(p_node);
 	}
@@ -198,7 +203,11 @@ public:
 	godot::RID _update_effect(uint32_t p_idx, godot::RID p_rid) {
 		const godot::RID old_rid = Base::template _update_effect<Effect>(p_idx, p_rid);
 		if constexpr (!std::is_same_v<Effect, HoverEffect> || Derived::receives_hover_effects) {
-			if (is_visible(p_idx)) {
+			// node_entities[p_idx].entity is only materialized once registered; calling
+			// Effect::update on it beforehand (e.g. a node marked visible before its
+			// deferred registration, like CollisionObjectLoader's ray-pickable gating)
+			// would touch a nil RealityKit entity.
+			if (is_visible(p_idx) && node_entities[p_idx].registered) {
 				Effect::update(Base::owner, get_entity(p_idx), p_rid);
 			}
 		}

@@ -1176,6 +1176,18 @@ public struct Entity: @unchecked Sendable {
         }
     }
 
+    public func setEnvironmentLightingWeight(_ weight: Float) {
+        MainActor.assumeIsolated {
+            self.value.components.set(EnvironmentLightingConfigurationComponent(environmentLightingWeight: weight))
+        }
+    }
+
+    public func unsetEnvironmentLightingWeight() {
+        MainActor.assumeIsolated {
+            self.value.components.remove(EnvironmentLightingConfigurationComponent.self)
+        }
+    }
+
     public func setPointLight(lightColor: PointLightComponent.Color,
                               lightIntensity: Float,
                               attenuationRadius: Float,

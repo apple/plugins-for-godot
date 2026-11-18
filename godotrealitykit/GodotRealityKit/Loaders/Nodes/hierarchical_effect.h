@@ -51,6 +51,12 @@ struct IBLEffect {
 	static void update(NodeLoaders *p_nodes, GodotRealityKit::Entity p_entity, godot::RID p_new_rid);
 };
 
+struct EnvironmentLightingEffect {
+	float weight = 1.0f;
+
+	static void update(NodeLoaders *p_nodes, GodotRealityKit::Entity p_entity, godot::RID p_new_rid);
+};
+
 // Two entities parented to root: `clipper_entity` (C) carries the ClippingComponent and a rigid
 // (rotation + translation only) transform; `anchor_entity` (A) is C's child with transform = C's
 // inverse, so reparenting content under A cancels C's transform and content keeps its correct
@@ -121,7 +127,17 @@ public:
 	godot::RID get(uint64_t p_root_id) const;
 	bool has(uint64_t p_root_id) const;
 
-	godot::RID get_rid(godot::Node *p_node);
+	// Non-null only for nodes that are an effect root. Returned by pointer so the ancestor walk
+	// in NodeLoaders::resolve_inherited_effects needs no RID::is_valid() call, which is an
+	// out-of-line ptrcall in godot-cpp.
+	const godot::RID *find(uint64_t p_root_id) const {
+		const auto found = root_id_to_rid.find(p_root_id);
+		return found ? &found->value : nullptr;
+	}
+
+	bool is_empty() const { return root_id_to_rid.is_empty(); }
+
+	void mark_changed(uint64_t p_root_id) { queued_propagations.push_back(p_root_id); }
 
 	void flush_propagations();
 
@@ -134,20 +150,28 @@ private:
 		uint64_t root_id;
 	};
 
-	struct alignas(16) Propagation {
-		uint64_t root_id;
-		godot::RID rid;
-	};
-
 	godot::HashMap<uint64_t, godot::RID> root_id_to_rid;
 	godot::RID_Owner<EffectAndRoot> effect_owner;
-	godot::LocalVector<Propagation> queued_propagations;
+	godot::LocalVector<uint64_t> queued_propagations;
 	NodeLoaders *owner;
 };
 
 template <typename Effect> using LocalRIDVector = godot::LocalVector<godot::RID>;
 
-using EffectRIDsSet = EffectSet<LocalRIDVector, HoverEffect, PortalEffect, PortalCrossingEffect, IBLEffect, ClippingEffect>;
-using HierarchicalEffectSet = EffectSet<HierarchicalEffect, HoverEffect, PortalEffect, PortalCrossingEffect, IBLEffect, ClippingEffect>;
+// The rid of the nearest ancestor-or-self effect root, per effect, as produced by
+// NodeLoaders::resolve_inherited_effects. `resolved` is tracked separately from the rid so the
+// ancestor walk can skip already-resolved effects without calling RID::is_valid().
+template <typename Effect>
+struct ResolvedEffectRID {
+	godot::RID rid;
+	bool resolved = false;
+};
+
+// All three sets must list the effects in the same order: EffectSet::for_each is a comma fold
+// over that order, and PortalEffect has to run before ClippingEffect so clipping's setParent
+// wins over the portal's (see ClippingEffect::update).
+using EffectRIDsSet = EffectSet<LocalRIDVector, HoverEffect, PortalEffect, PortalCrossingEffect, IBLEffect, ClippingEffect, EnvironmentLightingEffect>;
+using HierarchicalEffectSet = EffectSet<HierarchicalEffect, HoverEffect, PortalEffect, PortalCrossingEffect, IBLEffect, ClippingEffect, EnvironmentLightingEffect>;
+using ResolvedEffectRIDs = EffectSet<ResolvedEffectRID, HoverEffect, PortalEffect, PortalCrossingEffect, IBLEffect, ClippingEffect, EnvironmentLightingEffect>;
 
 } // namespace gdrk

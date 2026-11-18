@@ -22,6 +22,7 @@ repo_dir = ARGUMENTS.get('repo_dir')
 deps_dir = ARGUMENTS.get('deps_dir')
 
 env["build_library"] = False
+env["custom_api_file"] = deps_dir + "/extension_api.json"
 env = SConscript(deps_dir + "/godot-cpp/SConstruct", {"env": env})
 
 doc_data = env.GodotCPPDocData(repo_dir + "/GodotRealityKit/gen/doc_data.gen.cpp", source=Glob(repo_dir + "/doc_classes/*.xml"))

@@ -146,18 +146,4 @@ public:
 	uint32_t remove(RealityPortalCrossing3D *p_node);
 };
 
-class SkeletonModifierLoader : public NodeLoaderBase<SkeletonModifierLoader, godot::SkeletonModifier3D> {
-	NODE_LOADER(SkeletonModifierLoader, NodeLoaderBase, godot::SkeletonModifier3D)
-public:
-	uint32_t add(godot::SkeletonModifier3D *p_node) { return Base::add(p_node); }
-	uint32_t remove(godot::SkeletonModifier3D *p_node) { return Base::remove(p_node); }
-
-	void update_deps(ResourceLoaderSet &p_resource_loaders) {
-		SkeletonLoader *skeletons = std::get<SkeletonLoader *>(p_resource_loaders);
-		for_each_added([&](uint32_t p_idx) {
-			skeletons->add_skeleton_modifier(nodes[p_idx]);
-		});
-	}
-};
-
 } //namespace gdrk

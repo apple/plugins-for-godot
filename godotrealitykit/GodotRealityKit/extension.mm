@@ -15,6 +15,7 @@
 #import "clipping_3d.h"
 #import "controller_xr_interface.h"
 #import "directional_light_shadow_3d.h"
+#import "environment_lighting_configuration.h"
 #import "hover_effect_3d.h"
 #import "image_based_light_3d.h"
 #import "input_events.h"
@@ -45,6 +46,7 @@
 #import <Foundation/Foundation.h>
 #import <GameController/GameController.h>
 
+#include "extension.h"
 namespace gdrk {
 
 void install_renderer_relaunch_guard();
@@ -70,6 +72,7 @@ void initialize_gdrk_module(godot::ModuleInitializationLevel p_level) {
 		GDREGISTER_RUNTIME_CLASS(ShapeLoader);
 		GDREGISTER_RUNTIME_CLASS(NodeLoaders);
 		GDREGISTER_RUNTIME_CLASS(RealityControllerXRInterface);
+		GDREGISTER_CLASS(GodotRealityKit);
 		GDREGISTER_CLASS(RealityVolumeCamera3D);
 		GDREGISTER_CLASS(RealityHoverEffect3D);
 		GDREGISTER_CLASS(RealityClipping3D);
@@ -77,6 +80,7 @@ void initialize_gdrk_module(godot::ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(RealityPortalCrossing3D);
 		GDREGISTER_CLASS(RealityImageBasedLight3D);
 		GDREGISTER_CLASS(RealityKitDirectionalLightShadow3D);
+		GDREGISTER_CLASS(RealityKitEnvironmentLightingConfiguration);
 		GDREGISTER_CLASS(InputEventSpatialTouch);
 		GDREGISTER_CLASS(InputEventSpatialDrag);
 
@@ -105,7 +109,23 @@ void main_loop_frame() {
 	}
 
 	SceneLoader *loader = reality_scene_tree->get_loader();
+
+	for (const godot::String &path : GodotRealityKit::preloading_materials) {
+		loader->get_materials()->preload(path);
+	}
+	GodotRealityKit::preloading_materials.reset();
+
 	loader->update();
+}
+
+godot::LocalVector<godot::String> GodotRealityKit::preloading_materials;
+
+void GodotRealityKit::_bind_methods() {
+	godot::ClassDB::bind_static_method("GodotRealityKit", godot::D_METHOD("preload_material", "path"), &GodotRealityKit::preload_material);
+}
+
+void GodotRealityKit::preload_material(godot::String p_path) {
+	preloading_materials.push_back(p_path);
 }
 
 } // namespace gdrk
@@ -145,6 +165,25 @@ bool GDRKBridgeDelegate::ExtensionSettings::should_convert_world_environment() c
 			}
 #endif
 	}
+}
+
+bool GDRKBridgeDelegate::ExtensionSettings::should_convert_skybox() const {
+	if (!should_convert_world_environment()) {
+		return false;
+	}
+
+	// Mixed/progressive immersion shows passthrough behind the scene.
+	if (presentationStyle == kImmersive && immersionStyle != kFull) {
+		return false;
+	}
+
+#if !TARGET_OS_OSX
+	if (presentationStyle == kVolumetricWindow) {
+		return false;
+	}
+#endif
+
+	return true;
 }
 
 GDRKBridgeDelegate::ExtensionSettings GDRKBridgeDelegate::getExtensionSettings() const {
@@ -364,6 +403,10 @@ void GDRKBridgeDelegate::onWorldScaleChanged(float p_scale) const {
 	loader->get_nodes()->get_directional_lights().set_world_scale(p_scale);
 	loader->get_nodes()->get_point_lights().set_world_scale(p_scale);
 	loader->get_nodes()->get_spot_lights().set_world_scale(p_scale);
+}
+
+void GDRKBridgeDelegate::onExtraLightFrustumScaleChanged(float p_scale) const {
+	loader->get_nodes()->get_directional_lights().set_extra_light_frustum_scale(p_scale);
 }
 
 #if TARGET_OS_OSX

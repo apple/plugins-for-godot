@@ -47,6 +47,14 @@ struct BlitOp {
 };
 
 // ---------------------------------------------------------------------------
+// Mesh-wide deform state. Resolved once per mesh, then shared by every surface.
+
+struct DeformState {
+	bool run_deform = false;
+	bool has_skinning = false;
+};
+
+// ---------------------------------------------------------------------------
 // Self-contained deform op.
 
 struct DeformOp {
@@ -139,13 +147,13 @@ private:
 
 	// Position encoding only depends on DEFORM/COMPRESSED — WITH_UV is irrelevant,
 	// so the table is indexed by encoding_mode with that bit masked off.
-	using EncodeFn = void (MeshEncoder::*)(Mesh &, uint32_t);
+	using EncodeFn = void (MeshEncoder::*)(Mesh &, uint32_t, const DeformState &);
 	static const EncodeFn position_encode_table[4];
 
-	void _encode_static_pos(Mesh &p_mesh, uint32_t surface_idx);
-	void _encode_deform_pos(Mesh &p_mesh, uint32_t surface_idx);
-	void _encode_static_compressed_pos(Mesh &p_mesh, uint32_t surface_idx);
-	void _encode_deform_compressed_pos(Mesh &p_mesh, uint32_t surface_idx);
+	void _encode_static_pos(Mesh &p_mesh, uint32_t surface_idx, const DeformState &);
+	void _encode_deform_pos(Mesh &p_mesh, uint32_t surface_idx, const DeformState &p_deform);
+	void _encode_static_compressed_pos(Mesh &p_mesh, uint32_t surface_idx, const DeformState &);
+	void _encode_deform_compressed_pos(Mesh &p_mesh, uint32_t surface_idx, const DeformState &p_deform);
 
 	void _encode_attributes_surface(Mesh &p_mesh, uint32_t surface_idx);
 };

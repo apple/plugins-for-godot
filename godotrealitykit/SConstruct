@@ -134,8 +134,8 @@ def build_godot(target_env):
         'scons verbose=1 platform=macos target=editor generate_bundle=yes dev_build=yes vulkan=false disable_path_overrides=no',
         'scons verbose=1 platform=macos target=template_{config} generate_bundle=yes vulkan=false disable_path_overrides=no'.format(
             config=deps_config),
-        'scons verbose=1 platform=visionos target=template_{config} generate_bundle=yes compiledb=yes vulkan=false SWIFT_FRONTEND="{REPO_DIR}/scripts/build/swift-frontend-wrapper.sh"'.format(
-            config=deps_config, REPO_DIR=REPO_DIR),
+        'scons verbose=1 platform=visionos target=template_{config} generate_bundle=yes compiledb=yes vulkan=false'.format(
+            config=deps_config),
     ]
 
     for cmd in scons_cmds:
@@ -317,7 +317,7 @@ def assemble_full_addon(cfg):
         if os.path.exists(src):
             shutil.copy2(src, os.path.join(ad, f))
 
-    for d in ['volume_camera_gizmo', 'directional_light_shadow_gizmo', 'clipping_gizmo']:
+    for d in ['clipping_gizmo', 'volume_camera_gizmo', 'directional_light_shadow_gizmo']:
         src = os.path.join(etc_dir, d)
         if os.path.isdir(src):
             shutil.copytree(src, os.path.join(ad, d))

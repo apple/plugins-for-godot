@@ -63,6 +63,14 @@ void ClippingEffect::update(NodeLoaders *p_nodes, GodotRealityKit::Entity entity
 	}
 }
 
+void EnvironmentLightingEffect::update(NodeLoaders *p_nodes, GodotRealityKit::Entity entity, godot::RID p_new_rid) {
+	if (p_new_rid.is_valid()) {
+		entity.setEnvironmentLightingWeight(p_nodes->get_environment_lighting_weight(p_new_rid));
+	} else {
+		entity.unsetEnvironmentLightingWeight();
+	}
+}
+
 template <typename Effect>
 Effect &HierarchicalEffect<Effect>::get_effect(godot::RID p_rid) {
 	static Effect default_effect;
@@ -86,15 +94,8 @@ bool HierarchicalEffect<Effect>::owns(godot::RID p_rid) {
 template <typename Effect>
 godot::RID HierarchicalEffect<Effect>::create(uint64_t p_root_id, const Effect &p_effect) {
 	const godot::RID rid = effect_owner.make_rid({ .effect = p_effect, .root_id = p_root_id });
-
 	root_id_to_rid.insert(p_root_id, rid);
-
-	godot::Object *root_obj = godot::ObjectDB::get_instance(p_root_id);
-	godot::Node *root = godot::Object::cast_to<godot::Node>(root_obj);
-	ERR_FAIL_NULL_V(root, godot::RID());
-
-	queued_propagations.push_back({ .root_id = p_root_id, .rid = rid });
-
+	queued_propagations.push_back(p_root_id);
 	return rid;
 }
 
@@ -104,7 +105,7 @@ void HierarchicalEffect<Effect>::free(uint64_t p_root_id) {
 	root_id_to_rid.erase(p_root_id);
 	effect_owner.free(rid);
 
-	queued_propagations.push_back({ .root_id = p_root_id, .rid = rid });
+	queued_propagations.push_back(p_root_id);
 }
 
 template <typename Effect>
@@ -119,27 +120,21 @@ bool HierarchicalEffect<Effect>::has(uint64_t p_root_id) const {
 }
 
 template <typename Effect>
-godot::RID HierarchicalEffect<Effect>::get_rid(godot::Node *p_node) {
-	return owner->visit(p_node, godot::RID(), [&](const auto &p_loader, auto p_node) {
-		const uint64_t node_id = p_node->get_instance_id();
-		const auto found_idx = p_loader.node_id_to_idx.find(node_id);
-		auto &effect_rids = p_loader.node_effect_rids_set.template get<Effect>();
-		return found_idx ? effect_rids[found_idx->value] : godot::RID();
-	});
-}
-
-template <typename Effect>
 void HierarchicalEffect<Effect>::flush_propagations() {
-	for (const auto [root_id, rid] : queued_propagations) {
+	for (const uint64_t root_id : queued_propagations) {
 		godot::Object *root_obj = godot::ObjectDB::get_instance(root_id);
 		godot::Node *root = godot::Object::cast_to<godot::Node>(root_obj);
 		if (!root) {
 			continue;
 		}
 
-		godot::Node *root_parent = root->get_parent();
-		const godot::RID parent_rid = root_parent ? get_rid(root_parent) : godot::RID();
-		const godot::RID effective_rid = rid.is_valid() ? rid : parent_rid;
+		// Resolve against root_id_to_rid rather than a rid captured when the propagation was
+		// queued: a create and a free of the same root in one frame would otherwise propagate a
+		// rid effect_owner has already reclaimed.
+		const godot::RID rid = get(root_id);
+		const godot::RID effective_rid = rid.is_valid()
+				? rid
+				: owner->resolve_inherited_effects(root->get_parent()).get<Effect>().rid;
 		propagate_update<true>(root, effective_rid);
 	}
 	queued_propagations.clear();
@@ -150,9 +145,7 @@ template <bool root>
 void HierarchicalEffect<Effect>::propagate_update(godot::Node *p_node, godot::RID p_rid) {
 	const uint64_t node_id = p_node->get_instance_id();
 	if constexpr (!root) {
-		const godot::RID cur_rid = get_rid(p_node);
-		EffectAndRoot *effect_root_id = effect_owner.get_or_null(cur_rid);
-		if (effect_root_id && effect_root_id->root_id == node_id) {
+		if (root_id_to_rid.has(node_id)) {
 			return;
 		}
 	}
@@ -177,3 +170,4 @@ template class gdrk::HierarchicalEffect<PortalEffect>;
 template class gdrk::HierarchicalEffect<PortalCrossingEffect>;
 template class gdrk::HierarchicalEffect<IBLEffect>;
 template class gdrk::HierarchicalEffect<ClippingEffect>;
+template class gdrk::HierarchicalEffect<EnvironmentLightingEffect>;

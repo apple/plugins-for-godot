@@ -46,8 +46,10 @@ public:
 
 	template <typename Effect>
 	void _update_effect(uint32_t p_idx, godot::RID p_rid) {
-		if (!node_is_ray_pickable.has(p_idx)) {
-			return;
+		if constexpr (!std::is_same_v<Effect, ClippingEffect>) {
+			if (!node_is_ray_pickable.has(p_idx)) {
+				return;
+			}
 		}
 		Base::template _update_effect<Effect>(p_idx, p_rid);
 	}

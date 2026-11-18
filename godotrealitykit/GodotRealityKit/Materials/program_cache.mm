@@ -12,12 +12,14 @@
 #import "program_cache.h"
 #import "bridge.h"
 
+#import "Loaders/Resources/material_loader.h"
 #import "base_material_builder.h"
 #import "node_defs.h"
 #import "snippets.h"
 #import "visual_program_builder.h"
 
 #include <godot_cpp/classes/file_access.hpp>
+#include <godot_cpp/classes/resource_loader.hpp>
 
 static GodotRealityKit::SGLMaterial broken_material = GodotRealityKit::SGLMaterial::brokenMaterial();
 
@@ -42,117 +44,208 @@ godot::String ProgramCache::read_from_cache(godot::String p_path) const {
 	return read_file(cache_path);
 }
 
-uint32_t ProgramCache::load_usda(ProgramDescription &&p_desc, swift::String &content, ProgramLoadedCallback &&p_finalize_callback) {
-	const uint32_t program_idx = programs.size();
-	programs.push_back(Program());
-	program_descriptions.push_back(std::move(p_desc));
-	program_loading_idxs.resize(programs.size());
-	program_loading_idxs.insert(program_idx);
-
+void ProgramCache::load_usda(uint32_t p_base_program_idx, swift::String &content) {
 	GodotRealityKit::SGLProgram::load("/bm", content,
-			GDRKMaterialLoadDelegate([this, program_idx, finalize = std::move(p_finalize_callback)](void *p_material_load_result) {
+			GDRKMaterialLoadDelegate([this, p_base_program_idx](void *p_material_load_result) {
 				GodotRealityKit::SGLMaterialLoadResult material_load_result =
 						GodotRealityKit::SGLMaterialLoadResult::fromRawPointer(p_material_load_result);
 
-				gdrk::emplace_replace(&programs[program_idx].value, material_load_result.getResult());
-				program_loading_idxs.remove(program_idx);
+				gdrk::emplace_replace(&base_programs[p_base_program_idx].value, material_load_result.getResult());
+				base_loading_idxs.remove(p_base_program_idx);
 
 				if (material_load_result.getErrorDescription().isSome()) {
 					GodotRealityKit::errPrint(material_load_result.getErrorDescription().getSome());
 				}
 
-				notify_program_loaded(program_idx);
-				finalize(program_idx);
+				finalize_pending_variants(p_base_program_idx);
 			}));
-	return program_idx;
 }
 
-uint32_t ProgramCache::make_usda(ProgramDescription &&p_desc,
-		const swift::Array<GodotRealityKit::ProgramPart> &p_program_parts,
-		ProgramLoadedCallback &&p_finalize_callback) {
+bool ProgramCache::make_usda(uint32_t p_base_program_idx,
+		const swift::Array<GodotRealityKit::ProgramPart> &p_program_parts) {
 	swift::Optional<swift::String> program_usda = compiler.get().compile(p_program_parts);
-	if (program_usda.isNone()) {
-		return UINT32_MAX;
+	bool success = false;
+	if (!program_usda.isNone()) {
+		success = true;
+		swift::String usda = program_usda.get();
+		load_usda(p_base_program_idx, usda);
 	}
 
-	swift::String usda = program_usda.get();
-	uint32_t program_index = load_usda(std::move(p_desc), usda, std::move(p_finalize_callback));
-	program_description_to_idx.insert(p_desc.hash, program_index);
-
-	return program_index;
+	return success;
 }
 
-uint32_t ProgramCache::load_usda_from_file(ProgramDescription &&p_desc,
-		godot::String p_resource_path,
-		ProgramLoadedCallback &&p_finalize_callback) {
+bool ProgramCache::load_usda_from_file(uint32_t p_base_program_idx, godot::String p_resource_path) {
 	godot::String usda_content = read_from_cache(p_resource_path);
 	if (usda_content.length() == 0) {
 		ERR_PRINT(std::format("Failed to load USDA associated with {} from cache directory", to_std_string(p_resource_path)).c_str());
-		return UINT32_MAX;
+		return false;
 	}
 	swift::String usda = to_swift_string(usda_content);
-	uint32_t program_index = load_usda(std::move(p_desc), usda, std::move(p_finalize_callback));
-	program_description_to_idx.insert(p_desc.hash, program_index);
-
-	return program_index;
+	load_usda(p_base_program_idx, usda);
+	return true;
 }
 
-uint32_t ProgramCache::create_program_async(const ShaderMaterialDescription &p_description) {
-	godot::Ref<godot::VisualShader> shader = p_description.shader;
-	if (!shader.is_valid()) {
-		return UINT32_MAX;
+uint32_t ProgramCache::alloc_variant(const ProgramDescription &p_desc) {
+	const uint32_t variant_idx = programs.size();
+	programs.push_back(Program({
+			.description = p_desc,
+	}));
+
+	program_loading_idxs.resize(programs.size());
+	program_loading_idxs.insert(variant_idx);
+	program_description_to_idx.insert(p_desc.hash, variant_idx);
+	return variant_idx;
+}
+
+void ProgramCache::finalize_variant(uint32_t p_variant_idx, uint32_t p_base_idx) {
+	gdrk::emplace_replace(&programs[p_variant_idx].value, base_programs[p_base_idx].value.makeVariant());
+
+	GodotRealityKit::SGLProgram &program = programs[p_variant_idx].value;
+	ProgramDescription &desc = programs[p_variant_idx].description;
+
+	if (desc.material_type == MATERIAL_TYPE_BASE_MATERIAL3D) {
+		BaseMaterialBuilder::finalize(desc.asBaseMaterial3D(), program);
+	} else if (desc.material_type == MATERIAL_TYPE_SHADER_MATERIAL) {
+		const ShaderMaterialDescription &base_shader = base_programs[p_base_idx].description.asShaderMaterial();
+		ShaderMaterialDescription &variant_shader = desc.asShaderMaterial();
+		variant_shader.uniforms = base_shader.uniforms;
+		variant_shader.transparent = base_shader.transparent;
+		VisualProgramBuilder::finalize(desc.asShaderMaterial(), program);
+	} else {
+		programs[p_variant_idx].value.setIsBrokenMaterial(true);
 	}
 
-	godot::String resource_path = shader->get_path();
-	godot::String metadata_string = read_from_cache(resource_path + ".meta.json");
-	ProgramDescription desc(p_description);
+	program_loading_idxs.remove(p_variant_idx);
+	notify_program_loaded(p_variant_idx);
+}
 
+void ProgramCache::finalize_pending_variants(uint32_t p_base_index) {
+	if (auto pending_variants = loading_variants.getptr(p_base_index)) {
+		for (uint32_t pending_variant : *pending_variants) {
+			finalize_variant(pending_variant, p_base_index);
+		}
+		loading_variants.erase(p_base_index);
+	}
+}
+
+bool ProgramCache::load_cached_visual_shader(uint32_t p_base_program_index, ShaderMaterialDescription &p_program_description) {
+	godot::Ref<godot::VisualShader> shader = p_program_description.shader;
+	godot::String resource_path = shader->get_path();
+
+	godot::String metadata_string = read_from_cache(resource_path + ".meta.json");
 	if (loading_mode != LoadingMode::DISABLE_CACHE && metadata_string.length() != 0) {
 		VisualProgramMetadata meta;
 		bool success = VisualProgramMetadata::unserialize(metadata_string, shader, meta);
 		if (success) {
-			desc.asShaderMaterial().uniforms = meta.uniforms;
-			desc.asShaderMaterial().transparent = meta.is_transparent;
+			p_program_description.uniforms = meta.uniforms;
+			p_program_description.transparent = meta.is_transparent;
+			success = load_usda_from_file(p_base_program_index, resource_path + ".usda");
 
-			uint32_t res = load_usda_from_file(std::move(desc), resource_path + ".usda", [=](uint32_t program_index) {
-				VisualProgramBuilder::finalize(program_descriptions[program_index].asShaderMaterial(), programs[program_index].value);
-			});
-
-			if (res != UINT32_MAX) {
-				return res;
+			if (success) {
+				return true;
 			}
 		}
 	}
 
-	if (loading_mode == LoadingMode::FORCE_CACHE) {
-		return UINT32_MAX;
-	}
-
-	VisualProgramBuilder builder(compiler, p_description);
-	swift::Array<GodotRealityKit::ProgramPart> program_parts = swift::Array<GodotRealityKit::ProgramPart>::init();
-	bool success = builder.build(program_parts);
-	if (!success) {
-		return UINT32_MAX;
-	}
-	VisualProgramMetadata meta = builder.get_metadata();
-	desc.asShaderMaterial().uniforms = meta.uniforms;
-	desc.asShaderMaterial().transparent = meta.is_transparent;
-	return make_usda(std::move(desc), program_parts, [=](uint32_t program_index) {
-		VisualProgramBuilder::finalize(program_descriptions[program_index].asShaderMaterial(), programs[program_index].value);
-	});
+	return false;
 }
 
-uint32_t ProgramCache::create_program_async(const BaseMaterial3DDescription &p_program_description) {
-	BaseMaterialBuilder builder(compiler, p_program_description);
+template <>
+bool ProgramCache::create_program_async<MaterialType::MATERIAL_TYPE_SHADER_MATERIAL>(uint32_t p_base_program_idx, ProgramDescription &p_program_description) {
+	ShaderMaterialDescription &description = p_program_description.asShaderMaterial();
+	godot::Ref<godot::VisualShader> shader = description.shader;
+	if (!shader.is_valid()) {
+		return false;
+	}
+
+	bool success = load_cached_visual_shader(p_base_program_idx, description);
+	if (success) {
+		return true;
+	}
+
+	if (loading_mode == LoadingMode::FORCE_CACHE) {
+		return false;
+	}
+
+	VisualProgramBuilder builder(compiler, p_program_description.asShaderMaterial());
+	swift::Array<GodotRealityKit::ProgramPart> program_parts = swift::Array<GodotRealityKit::ProgramPart>::init();
+	success = builder.build(program_parts);
+	if (!success) {
+		return false;
+	}
+
+	VisualProgramMetadata meta = builder.get_metadata();
+	description.uniforms = meta.uniforms;
+	description.transparent = meta.is_transparent;
+	return make_usda(p_base_program_idx, program_parts);
+}
+
+template <>
+bool ProgramCache::create_program_async<MaterialType::MATERIAL_TYPE_BASE_MATERIAL3D>(uint32_t p_base_program_idx, ProgramDescription &p_program_description) {
+	BaseMaterialBuilder builder(compiler, p_program_description.asBaseMaterial3D());
 	swift::Array<GodotRealityKit::ProgramPart> program_parts = swift::Array<GodotRealityKit::ProgramPart>::init();
 	bool success = builder.build(program_parts);
 	if (!success) {
-		return UINT32_MAX;
+		return false;
 	}
 
-	return make_usda(ProgramDescription(p_program_description), program_parts, [&](uint32_t program_index) {
-		BaseMaterialBuilder::finalize(program_descriptions[program_index].asBaseMaterial3D(), programs[program_index].value);
-	});
+	return make_usda(p_base_program_idx, program_parts);
+}
+
+void ProgramCache::preload_program(godot::String p_path) {
+	godot::Ref<godot::Resource> resource = godot::ResourceLoader::get_singleton()->load(p_path);
+	if (!resource.is_valid()) {
+		return;
+	}
+
+	godot::Ref<godot::VisualShader> visual_shader = godot::Object::cast_to<godot::VisualShader>(resource.ptr());
+	if (visual_shader.is_valid()) {
+		ShaderMaterialDescription shader_desc(visual_shader.ptr(), 0);
+		ProgramDescription desc(shader_desc);
+		preload_base_program(desc);
+		preloaded_materials.push_back(resource);
+		return;
+	}
+
+	godot::Ref<godot::Material> material = godot::Object::cast_to<godot::Material>(resource.ptr());
+	if (material.is_valid()) {
+		ProgramDescription desc = MaterialLoader::program_description_for_material(*material.ptr());
+		if (!desc.is_valid()) {
+			return;
+		}
+
+		preload_base_program(desc);
+		preloaded_materials.push_back(resource);
+	}
+}
+
+bool ProgramCache::preload_base_program(const ProgramDescription &p_program_description) {
+	const uint32_t base_hash = p_program_description.base_program_hash;
+	if (auto *found_base = base_program_hash_to_base_idx.getptr(base_hash)) {
+		return true;
+	}
+
+	const uint32_t base_idx = base_programs.size();
+	base_programs.push_back(BaseProgram({ .description = p_program_description }));
+
+	ProgramDescription &base_program_description = base_programs[base_idx].description;
+	base_loading_idxs.resize(base_programs.size());
+	base_loading_idxs.insert(base_idx);
+	base_program_hash_to_base_idx.insert(base_hash, base_idx);
+
+	bool success = false;
+	if (base_program_description.material_type == MATERIAL_TYPE_BASE_MATERIAL3D) {
+		success = create_program_async<MATERIAL_TYPE_BASE_MATERIAL3D>(base_idx, base_program_description);
+	} else if (base_program_description.material_type == MATERIAL_TYPE_SHADER_MATERIAL) {
+		success = create_program_async<MATERIAL_TYPE_SHADER_MATERIAL>(base_idx, base_program_description);
+	}
+
+	if (!success) {
+		base_loading_idxs.remove(base_idx);
+		base_program_hash_to_base_idx.erase(base_hash);
+	}
+
+	return success;
 }
 
 uint32_t ProgramCache::create_program_async(const ProgramDescription &p_program_description) {
@@ -164,18 +257,45 @@ uint32_t ProgramCache::create_program_async(const ProgramDescription &p_program_
 		return found_program->value;
 	}
 
-	uint32_t index = UINT32_MAX;
+	const uint32_t base_hash = p_program_description.base_program_hash;
+	const uint32_t variant_idx = alloc_variant(p_program_description);
+
+	if (auto *found_base = base_program_hash_to_base_idx.getptr(base_hash)) {
+		const uint32_t base_idx = *found_base;
+
+		if (!base_loading_idxs.has(base_idx)) {
+			finalize_variant(variant_idx, base_idx);
+		} else {
+			loading_variants[base_idx].push_back(variant_idx);
+		}
+		return variant_idx;
+	}
+
+	const uint32_t base_idx = base_programs.size();
+	base_programs.push_back(BaseProgram({ .description = p_program_description }));
+	loading_variants[base_idx].push_back(variant_idx);
+
+	ProgramDescription &base_program_description = base_programs[base_idx].description;
+	base_loading_idxs.resize(base_programs.size());
+	base_loading_idxs.insert(base_idx);
+	base_program_hash_to_base_idx.insert(base_hash, base_idx);
+
+	bool success = false;
 	if (p_program_description.material_type == MATERIAL_TYPE_BASE_MATERIAL3D) {
-		index = create_program_async(p_program_description.asBaseMaterial3D());
+		success = create_program_async<MATERIAL_TYPE_BASE_MATERIAL3D>(base_idx, base_program_description);
 	} else if (p_program_description.material_type == MATERIAL_TYPE_SHADER_MATERIAL) {
-		index = create_program_async(p_program_description.asShaderMaterial());
+		success = create_program_async<MATERIAL_TYPE_SHADER_MATERIAL>(base_idx, base_program_description);
 	}
 
-	if (index == UINT32_MAX) {
-		index = create_broken_program_async();
+	if (!success) {
+		program_loading_idxs.remove(variant_idx);
+		base_loading_idxs.remove(base_idx);
+		base_program_hash_to_base_idx.erase(base_hash);
+		loading_variants.erase(base_idx);
+		return create_broken_program_async();
 	}
 
-	return index;
+	return variant_idx;
 }
 
 #if DEBUG
@@ -239,16 +359,44 @@ uint32_t ProgramCache::create_broken_program_async() {
 	SG(
 			(geometry_modifier, surface_shader);)
 
-	broken_material_index = make_usda(ProgramDescription(), program_parts, [&](uint32_t program_index) {
-		programs[program_index].value.setIsBrokenMateiral(true);
-	});
+	ProgramDescription desc = ProgramDescription();
+	broken_material_index = alloc_variant(desc);
+	const uint32_t base_idx = base_programs.size();
+	loading_variants[base_idx].push_back(broken_material_index);
+	base_programs.push_back(BaseProgram({ .description = desc }));
+
+	ProgramDescription &base_desc = base_programs[base_idx].description;
+	uint32_t base_hash = base_desc.base_program_hash;
+	base_loading_idxs.resize(base_programs.size());
+	base_loading_idxs.insert(base_idx);
+	base_program_hash_to_base_idx.insert(base_hash, base_idx);
+
+	bool success = make_usda(base_idx, program_parts);
+	ERR_FAIL_COND_V(!success, UINT32_MAX);
 
 	return broken_material_index;
 }
 
-GodotRealityKit::SGLMaterial ProgramCache::create_material(uint32_t p_program_idx, godot::RID p_material_rid) {
+void ProgramCache::reset() {
+	ERR_FAIL_COND_MSG(has_loading(), "Cannot reset ProgramCache while programs are still loading");
+
+	programs.clear();
+	program_loading_idxs.clear();
+	program_description_to_idx.clear();
+
+	base_programs.clear();
+	base_programs_descriptions.clear();
+	base_loading_idxs.clear();
+	base_program_hash_to_base_idx.clear();
+	loading_variants.clear();
+
+	preloaded_materials.clear();
+	snippet_cache.clear();
+	broken_material_index = UINT32_MAX;
+}
+
+GodotRealityKit::SGLMaterial ProgramCache::create_material(uint32_t p_program_idx) {
 	ERR_FAIL_COND_V(program_loading_idxs.has(p_program_idx), broken_material);
-	const ProgramDescription &program_description = program_descriptions[p_program_idx];
 	GodotRealityKit::SGLProgram program = programs[p_program_idx].value;
 	GodotRealityKit::SGLMaterial material = program.instantiate();
 	return material;

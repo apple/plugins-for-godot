@@ -23,6 +23,7 @@
 #include "Nodes/csg_shape3d_loader.h"
 #include "Nodes/directional_light_loader.h"
 #include "Nodes/directional_light_shadow_loader.h"
+#include "Nodes/environment_lighting_configuration_loader.h"
 
 #include "Nodes/grid_map_loader.h"
 #include "Nodes/image_based_light_loader.h"
@@ -38,15 +39,15 @@
 #include "volume_camera_3d.h"
 
 #include <godot_cpp/core/class_db.hpp>
-#include <godot_cpp/templates/sort_array.hpp>
 
 namespace gdrk {
 
 using NodeLoaderSet = std::tuple<
 		RealityPortalMeshInstanceLoader, MeshInstanceLoader, MultiMeshInstanceLoader, GridMapLoader,
 		CPUParticlesLoader, CollisionObjectLoader, SpriteLoader, CSGShape3DLoader, DirectionalLightLoader, RealityKitDirectionalLightShadow3DLoader, PointLightLoader,
-		SpotLightLoader, LabelLoader, CameraLoader, SkeletonModifierLoader, RealityHoverEffectLoader,
-		RealityPortalCrossingLoader, WorldEnvironmentLoader, ImageBasedLightLoader, RealityClippingLoader, AnyNodeLoader>;
+		SpotLightLoader, LabelLoader, CameraLoader, RealityHoverEffectLoader,
+		RealityPortalCrossingLoader, WorldEnvironmentLoader, ImageBasedLightLoader, RealityClippingLoader,
+		RealityKitEnvironmentLightingConfigurationLoader, AnyNodeLoader>;
 
 // Umbrella class for loading all node types, plus the camera.
 // Also manages mappings between Godot node IDs and RealityKit Entity IDs.
@@ -140,14 +141,14 @@ public:
 	}
 
 	template <typename Effect>
-	godot::RID get_effect_rid(godot::Node *p_node) {
-		return effects.get<Effect>().get_rid(p_node);
-	}
-
-	template <typename Effect>
 	bool has_effect_root(uint64_t p_root_id) {
 		return effects.template get<Effect>().has(p_root_id);
 	}
+
+	// The rid of the nearest ancestor-or-self effect root, per effect, resolved against each
+	// HierarchicalEffect's root_id_to_rid rather than another node's cached rid, so the result
+	// does not depend on the order loaders process their dirty nodes in.
+	ResolvedEffectRIDs resolve_inherited_effects(godot::Node *p_node);
 
 	godot::RID hover_effect_create(uint64_t p_root_id, const HoverEffectStyle &p_style) {
 		HierarchicalEffect<HoverEffect> &hover_effects = effects.get<HoverEffect>();
@@ -238,6 +239,30 @@ public:
 	GodotRealityKit::Entity get_ibl_entity(godot::RID p_rid) {
 		HierarchicalEffect<IBLEffect> &ibl_effects = effects.get<IBLEffect>();
 		return ibl_effects.get_effect(p_rid).ibl_entity;
+	}
+
+	godot::RID environment_lighting_create(uint64_t p_root_id, float p_weight) {
+		HierarchicalEffect<EnvironmentLightingEffect> &lighting_effects = effects.get<EnvironmentLightingEffect>();
+		ERR_FAIL_COND_V_MSG(lighting_effects.has(p_root_id), godot::RID(), "Node cannot have multiple environment lighting configurations");
+		return lighting_effects.create(p_root_id, EnvironmentLightingEffect{ .weight = p_weight });
+	}
+
+	void environment_lighting_update(uint64_t p_root_id, float p_weight) {
+		HierarchicalEffect<EnvironmentLightingEffect> &lighting_effects = effects.get<EnvironmentLightingEffect>();
+		ERR_FAIL_COND(!lighting_effects.has(p_root_id));
+		lighting_effects.get_effect(lighting_effects.get(p_root_id)).weight = p_weight;
+		lighting_effects.mark_changed(p_root_id);
+	}
+
+	void environment_lighting_free(uint64_t p_root_id) {
+		HierarchicalEffect<EnvironmentLightingEffect> &lighting_effects = effects.get<EnvironmentLightingEffect>();
+		ERR_FAIL_COND(!lighting_effects.has(p_root_id));
+		lighting_effects.free(p_root_id);
+	}
+
+	float get_environment_lighting_weight(godot::RID p_rid) {
+		HierarchicalEffect<EnvironmentLightingEffect> &lighting_effects = effects.get<EnvironmentLightingEffect>();
+		return lighting_effects.get_effect(p_rid).weight;
 	}
 
 	// A rigid (scale = 1) rotation + translation; the clipping rig is always rigid so that the
@@ -332,8 +357,6 @@ private:
 
 	NodeLoaderSet loaders;
 
-	uint64_t next_topo_priority = 0;
-	godot::HashMap<uint64_t, uint64_t> node_id_to_topo_priority;
 	godot::HashMap<uint64_t, uint64_t> node_id_to_entity_id;
 	godot::HashMap<uint64_t, uint64_t> entity_id_to_node_id;
 

@@ -48,9 +48,6 @@ NodeLoaders::NodeLoaders() :
 }
 
 void NodeLoaders::node_added(godot::Node *p_node) {
-	const uint64_t node_id = p_node->get_instance_id();
-	node_id_to_topo_priority.insert(node_id, next_topo_priority++);
-
 	if (p_node->has_meta("_gdrk_skip") && p_node->get_meta("_gdrk_skip")) {
 		return;
 	}
@@ -74,7 +71,6 @@ void NodeLoaders::node_added(godot::Node *p_node) {
 
 void NodeLoaders::node_removed(godot::Node *p_node) {
 	const uint64_t node_id = p_node->get_instance_id();
-	node_id_to_topo_priority.erase(node_id);
 
 	if (p_node->has_meta("_gdrk_skip") && p_node->get_meta("_gdrk_skip")) {
 		return;
@@ -93,6 +89,33 @@ void NodeLoaders::node_removed(godot::Node *p_node) {
 		entity_id_to_node_id.erase(found->value);
 		node_id_to_entity_id.remove(found);
 	}
+}
+
+ResolvedEffectRIDs NodeLoaders::resolve_inherited_effects(godot::Node *p_node) {
+	ResolvedEffectRIDs resolved;
+
+	uint32_t pending = 0;
+	effects.for_each([&](const auto &p_effect) {
+		pending += p_effect.is_empty() ? 0 : 1;
+	});
+
+	for (godot::Node *node = p_node; node && pending > 0; node = node->get_parent()) {
+		const uint64_t node_id = node->get_instance_id();
+		effects.for_each([&]<typename Effect>(const HierarchicalEffect<Effect> &p_effect) {
+			ResolvedEffectRID<Effect> &out = resolved.get<Effect>();
+			if (out.resolved) {
+				return;
+			}
+
+			if (const godot::RID *rid = p_effect.find(node_id)) {
+				out.rid = *rid;
+				out.resolved = true;
+				pending--;
+			}
+		});
+	}
+
+	return resolved;
 }
 
 void NodeLoaders::update_deps(ResourceLoaderSet &p_resource_loaders) {

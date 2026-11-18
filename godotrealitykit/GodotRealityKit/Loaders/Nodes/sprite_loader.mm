@@ -79,7 +79,7 @@ ProgramDescription get_sprite_base_material_description(godot::SpriteBase3D *p_n
 		.texture_filter = p_node->get_texture_filter(),
 		.billboard_mode = p_node->get_billboard_mode(),
 		.flags = flags,
-		.use_depth_postpass = true,
+		.depth_pass_mode = DepthPostpass,
 	};
 }
 

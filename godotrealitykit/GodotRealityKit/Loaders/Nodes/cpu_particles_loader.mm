@@ -32,6 +32,7 @@ void CPUParticlesLoader::update_deps(
 		changed_multimesh_deps.mark_changed(idx);
 		changed_material_deps.mark_changed(idx);
 	});
+
 	for_each_valid([&](uint32_t idx) {
 		godot::CPUParticles3D *node = nodes[idx];
 		godot::Ref<godot::Mesh> mesh = node->get_mesh();

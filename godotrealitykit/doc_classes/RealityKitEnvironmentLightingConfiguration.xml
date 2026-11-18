@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="RealityKitEnvironmentLightingConfiguration" inherits="Node" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/godotengine/godot/master/doc/class.xsd">
+	<brief_description>
+		Controls how much the system environment lighting affects a node and its descendants.
+	</brief_description>
+	<description>
+		On visionOS, the lighting of the surrounding real-world environment (AR image-based lighting) is combined with the image-based lighting defined by the app. RealityKitEnvironmentLightingConfiguration controls how much the system lighting contributes to the content it applies to.
+
+		The configuration applies to its parent node and all the descendants of that node. Only one RealityKitEnvironmentLightingConfiguration is supported per parent. A configuration nested deeper in the tree overrides the one above it.
+
+		If the parent is a [WorldEnvironment], the configuration applies to the whole scene.
+
+		To configure the lighting of a [RealityImageBasedLight3D], add the configuration as a sibling of the [RealityImageBasedLight3D]:
+		[codeblock]
+		MySubScene
+		    |- RealityImageBasedLight3D
+		    |- RealityKitEnvironmentLightingConfiguration
+		    |- MeshInstance3D
+		[/codeblock]
+
+		This translates to a RealityKit [url=https://developer.apple.com/documentation/realitykit/environmentlightingconfigurationcomponent]EnvironmentLightingConfigurationComponent[/url].
+	</description>
+	<tutorials>
+	</tutorials>
+	<members>
+		<member name="environment_lighting_weight" type="float" setter="set_environment_lighting_weight" getter="get_environment_lighting_weight" default="1.0">
+			How much the system environment lighting contributes to the lighting of the content, from [code]0.0[/code] (none) to [code]1.0[/code] (full).
+		</member>
+	</members>
+</class>

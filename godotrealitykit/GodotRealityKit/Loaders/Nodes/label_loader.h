@@ -43,6 +43,7 @@ private:
 	struct DependencyState {
 		uint32_t text_hash = 0;
 		uint32_t material_hash = 0;
+		uint32_t font_atlas_hash = 0;
 	};
 
 	DependencyList mesh_deps;

@@ -34,7 +34,6 @@ public:
 	}
 
 	uint32_t find_or_add(uint64_t p_skeleton_id, godot::Skeleton3D *p_skeleton);
-	void add_skeleton_modifier(godot::SkeletonModifier3D *p_skeleton_modifier);
 	void remove(uint32_t p_idx);
 
 	const godot::LocalVector<godot::Transform3D> &get_bone_pose_snapshot(uint32_t p_idx) const {

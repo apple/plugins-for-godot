@@ -44,8 +44,8 @@ bool SkyboxLoader::update(id<MTLCommandBuffer> p_command_buffer) {
 	PROFILE_FUNC_SCOPE;
 
 	const auto &settings = get_scene_tree()->get_extension_settings();
-	if (settings.presentationStyle == kImmersive && settings.immersionStyle != kFull) {
-		// Mixed/progressive immersion shows passthrough; nothing to load.
+	if (!settings.should_convert_skybox()) {
+		// Nothing to load when the skybox cannot be seen.
 		// Returning false here would keep SceneLoader::update bailing before it
 		// can tear down the boot-splash UIScene, leaving the app stuck on the
 		// loading view ().
